@@ -9,15 +9,13 @@ public struct StrategyTarget: Hashable {
     public let host: String
     public let port: Int
     public let path: String
-    public let category: String
     public let isReference: Bool
 
-    public init(name: String, host: String, port: Int = 443, path: String = "/", category: String = "General", isReference: Bool = false) {
+    public init(name: String, host: String, port: Int = 443, path: String = "/", isReference: Bool = false) {
         self.name = name
         self.host = host
         self.port = port
         self.path = path
-        self.category = category
         self.isReference = isReference
     }
 
@@ -28,41 +26,34 @@ public struct StrategyTarget: Hashable {
 }
 
 public enum StrategyTargets {
-    /// Comprehensive list of representative endpoints:
-    /// - Turkey-specific blocks (BTK / Court Orders)
-    /// - Russia-specific blocks (RKN / TSPU DPI)
-    /// - Normal / frequently used daily services & social media
+    /// Curated representative dataset combining major global platforms and daily-use services
     public static let all: [StrategyTarget] = [
         // Reference sanity check (unblocked connectivity baseline)
-        StrategyTarget(name: "Apple", host: "apple.com", port: 443, path: "/", category: "Reference", isReference: true),
+        StrategyTarget(name: "Apple", host: "apple.com", port: 443, path: "/", isReference: true),
 
-        // --- Turkey-Specific DPI Blocks (BTK / Court Orders) ---
-        StrategyTarget(name: "Discord (Web/API)", host: "discord.com", port: 443, path: "/", category: "Turkey (BTK)"),
-        StrategyTarget(name: "Discord (Gateway)", host: "gateway.discord.gg", port: 443, path: "/", category: "Turkey (BTK)"),
-        StrategyTarget(name: "Wattpad", host: "wattpad.com", port: 443, path: "/", category: "Turkey (BTK)"),
-        StrategyTarget(name: "Pastebin", host: "pastebin.com", port: 443, path: "/", category: "Turkey (BTK)"),
-        StrategyTarget(name: "Ekşi Sözlük", host: "eksisozluk1923.com", port: 443, path: "/", category: "Turkey (BTK)"),
-        StrategyTarget(name: "VOA Turkish", host: "voaturkce.com", port: 443, path: "/", category: "Turkey (BTK)"),
-        StrategyTarget(name: "Airalo (eSIM)", host: "airalo.com", port: 443, path: "/", category: "Turkey (BTK)"),
+        // Global platforms subject to censorship or DPI restrictions
+        StrategyTarget(name: "Discord (Web/API)", host: "discord.com", port: 443, path: "/"),
+        StrategyTarget(name: "Discord (Gateway)", host: "gateway.discord.gg", port: 443, path: "/"),
+        StrategyTarget(name: "Roblox", host: "roblox.com", port: 443, path: "/"),
+        StrategyTarget(name: "Wattpad", host: "wattpad.com", port: 443, path: "/"),
+        StrategyTarget(name: "Pastebin", host: "pastebin.com", port: 443, path: "/"),
+        StrategyTarget(name: "X / Twitter", host: "x.com", port: 443, path: "/"),
+        StrategyTarget(name: "Instagram", host: "instagram.com", port: 443, path: "/"),
+        StrategyTarget(name: "Facebook", host: "facebook.com", port: 443, path: "/"),
+        StrategyTarget(name: "YouTube", host: "youtube.com", port: 443, path: "/"),
+        StrategyTarget(name: "Google Video CDN", host: "redirector.googlevideo.com", port: 443, path: "/"),
+        StrategyTarget(name: "RuTracker", host: "rutracker.org", port: 443, path: "/"),
+        StrategyTarget(name: "Tor Project", host: "torproject.org", port: 443, path: "/"),
+        StrategyTarget(name: "LinkedIn", host: "linkedin.com", port: 443, path: "/"),
+        StrategyTarget(name: "Medium", host: "medium.com", port: 443, path: "/"),
 
-        // --- Russia-Specific DPI Blocks (RKN / TSPU) ---
-        StrategyTarget(name: "X / Twitter", host: "x.com", port: 443, path: "/", category: "Russia (RKN)"),
-        StrategyTarget(name: "Instagram", host: "instagram.com", port: 443, path: "/", category: "Russia (RKN)"),
-        StrategyTarget(name: "Facebook", host: "facebook.com", port: 443, path: "/", category: "Russia (RKN)"),
-        StrategyTarget(name: "YouTube", host: "youtube.com", port: 443, path: "/", category: "Russia (RKN)"),
-        StrategyTarget(name: "Google Video CDN", host: "redirector.googlevideo.com", port: 443, path: "/", category: "Russia (RKN)"),
-        StrategyTarget(name: "RuTracker", host: "rutracker.org", port: 443, path: "/", category: "Russia (RKN)"),
-        StrategyTarget(name: "Meduza", host: "meduza.io", port: 443, path: "/", category: "Russia (RKN)"),
-        StrategyTarget(name: "Tor Project", host: "torproject.org", port: 443, path: "/", category: "Russia (RKN)"),
-        StrategyTarget(name: "LinkedIn", host: "linkedin.com", port: 443, path: "/", category: "Russia (RKN)"),
-
-        // --- Normal / Daily Use & Social Media (Verification Suite) ---
-        StrategyTarget(name: "Google", host: "google.com", port: 443, path: "/", category: "Daily Use"),
-        StrategyTarget(name: "Reddit", host: "reddit.com", port: 443, path: "/", category: "Daily Use"),
-        StrategyTarget(name: "Wikipedia", host: "wikipedia.org", port: 443, path: "/", category: "Daily Use"),
-        StrategyTarget(name: "Spotify", host: "spotify.com", port: 443, path: "/", category: "Daily Use"),
-        StrategyTarget(name: "Twitch", host: "twitch.tv", port: 443, path: "/", category: "Daily Use"),
-        StrategyTarget(name: "Cloudflare", host: "cloudflare.com", port: 443, path: "/", category: "Daily Use")
+        // Frequently used daily services & social media
+        StrategyTarget(name: "Google", host: "google.com", port: 443, path: "/"),
+        StrategyTarget(name: "Reddit", host: "reddit.com", port: 443, path: "/"),
+        StrategyTarget(name: "Wikipedia", host: "wikipedia.org", port: 443, path: "/"),
+        StrategyTarget(name: "Spotify", host: "spotify.com", port: 443, path: "/"),
+        StrategyTarget(name: "Twitch", host: "twitch.tv", port: 443, path: "/"),
+        StrategyTarget(name: "Cloudflare", host: "cloudflare.com", port: 443, path: "/")
     ]
 }
 
@@ -540,13 +531,7 @@ public final class StrategyOptimizer {
         }
 
         let blockedTargets = evalTargets.filter { !(baselineResults[$0.host]?.isReachable ?? false) }
-        let turkeyBlocked = blockedTargets.filter { $0.category == "Turkey (BTK)" }
-        let russiaBlocked = blockedTargets.filter { $0.category == "Russia (RKN)" }
-        var blockedDetails = [String]()
-        if !turkeyBlocked.isEmpty { blockedDetails.append("\(turkeyBlocked.count) Turkey/BTK") }
-        if !russiaBlocked.isEmpty { blockedDetails.append("\(russiaBlocked.count) Russia/RKN") }
-        let detailsStr = blockedDetails.isEmpty ? "" : " [\(blockedDetails.joined(separator: ", "))]"
-        emit("Baseline (Direct): \(baselineReachableCount)/\(evalTargets.count) reachable (\(blockedTargets.count) blocked by DPI\(detailsStr))\n")
+        emit("Baseline (Direct): \(baselineReachableCount)/\(evalTargets.count) reachable (\(blockedTargets.count) blocked by DPI)\n")
 
         if blockedTargets.isEmpty {
             emit("\u{001B}[32mAll test targets are directly accessible on your current network without DPI bypass.\u{001B}[0m")
@@ -628,9 +613,9 @@ public final class StrategyOptimizer {
         // Take top contenders (up to 4) for deep cross-referencing and verification
         let topContenders = Array(workingContenders.prefix(4).map { $0.profile })
         
-        // Build cross-verification target suite: all blocked targets + sample normal/daily use sites
-        let dailySample = evalTargets.filter { $0.category == "Daily Use" && (baselineResults[$0.host]?.isReachable ?? false) }.prefix(3)
-        let crossTargets = blockedTargets + Array(dailySample)
+        // Build cross-verification target suite: all blocked targets + sample baseline-reachable targets
+        let sampleReachable = Array(evalTargets.filter { baselineResults[$0.host]?.isReachable ?? false }.prefix(3))
+        let crossTargets = blockedTargets + sampleReachable
 
         emit("\n\u{001B}[1mCross-Referencing Top Contenders (2-Round Stability Verification)...\u{001B}[0m")
 
