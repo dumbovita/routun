@@ -90,19 +90,28 @@ routun logs -f
 
 ### Strategy Optimization (Blockcheck)
 
-`routun` includes an automated strategy detector inspired by Zapret's `blockcheck`. It establishes a baseline without desync, tests supported parameter profiles on an isolated test port, and selects the optimal profile for your network:
+`routun` includes an automated strategy detector inspired by Zapret's `blockcheck`. It tests a comprehensive matrix of parameter combinations (pure splits, dual splits, SNI disorders, TLS record segmentation, fake TTL sweeps, and OOB data) against curated targets for **Turkey (BTK)**, **Russia (RKN)**, and **daily use services**, cross-referencing contenders across two verification rounds:
 
 ```bash
-# Auto-detect and apply the best ByeDPI strategy profile
+# Auto-detect optimal strategy across 59 combinations with cross-referencing
 routun optimize
 
-# View all supported strategy profiles
+# Fast screening mode (evaluates only canonical profiles)
+routun optimize --quick
+
+# Verbose mode with per-target connection and latency diagnostics
+routun optimize -v
+
+# View curated strategy profiles
 routun profile list
 
-# Manually switch to a specific profile
-routun profile set simple-split
+# Inspect all 59 supported parameter combinations
+routun profile list --all
 
-# Inspect the active profile parameters
+# Manually switch to any profile or combination
+routun profile set fake-ttl3-disorder-2s
+
+# Inspect active profile and underlying ByeDPI arguments
 routun profile show
 ```
 

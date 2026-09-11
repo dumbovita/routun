@@ -294,7 +294,7 @@ public final class RoutunCommands {
         print("\(green)routun has been completely uninstalled from this system.\(reset)")
     }
 
-    public static func optimize(verbose: Bool = false) {
+    public static func optimize(verbose: Bool = false, quick: Bool = false) {
         let config = RoutunConfig.load()
         guard FileManager.default.isExecutableFile(atPath: config.ciadpiPath) else {
             print("\(red)Error:\(reset) ByeDPI (ciadpi) binary not found at \(config.ciadpiPath).")
@@ -302,7 +302,7 @@ public final class RoutunCommands {
             exit(1)
         }
 
-        let optimizer = StrategyOptimizer(ciadpiPath: config.ciadpiPath, verbose: verbose)
+        let optimizer = StrategyOptimizer(ciadpiPath: config.ciadpiPath, verbose: verbose, quick: quick)
         guard let selected = optimizer.run() else {
             print("\(yellow)Optimization completed without selecting a new profile. Preserving existing configuration.\(reset)")
             return
@@ -332,16 +332,23 @@ public final class RoutunCommands {
 
         switch action?.lowercased() {
         case "list":
-            print("\(bold)Supported ByeDPI Strategy Profiles:\(reset)")
+            let showAll = (name == "--all" || name == "-a")
+            let profilesToList = showAll ? StrategyProfiles.all : StrategyProfiles.canonical
+            let title = showAll ? "All Supported Parameter Combinations (\(StrategyProfiles.all.count)):" : "Curated ByeDPI Strategy Profiles:"
+
+            print("\(bold)\(title)\(reset)")
             print("------------------------------------------------------------")
-            for p in StrategyProfiles.all {
+            for p in profilesToList {
                 let isCurrent = (p.id == activeProfileId)
                 let marker = isCurrent ? "\(green)* (active)\(reset)" : "          "
-                let namePadded = p.id.padding(toLength: 16, withPad: " ", startingAt: 0)
-                print("  \(marker) \(bold)\(namePadded)\(reset) - \(p.description)")
-                print("                Args: \(p.args.joined(separator: " "))")
+                let namePadded = p.id.padding(toLength: 26, withPad: " ", startingAt: 0)
+                print("  \(marker) \(bold)\(namePadded)\(reset) [\(p.family)] - \(p.description)")
+                print("                            Args: \(p.args.joined(separator: " "))")
             }
             print("------------------------------------------------------------")
+            if !showAll {
+                print("Tip: Use '\(bold)routun profile list --all\(reset)' to inspect all \(StrategyProfiles.all.count) combinations.")
+            }
             print("To switch profile: \(bold)routun profile set <name>\(reset)")
 
         case "set":

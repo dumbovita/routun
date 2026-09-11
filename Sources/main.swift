@@ -16,8 +16,8 @@ func printUsage() {
       restart         Restart the service and cleanly refresh network routing (requires sudo)
       logs            Display service logs (supports -f/--follow, -n <lines>, -e/--error)
       doctor          Run full system and environment diagnostic checks
-      optimize        Run automated strategy detection (blockcheck) to find best profile
-      profile         View or switch ByeDPI strategy profiles (list, set <name>, show)
+      optimize        Run automated DPI evasion optimization (supports -v/--verbose, -q/--quick)
+      profile         View or switch ByeDPI strategy profiles (list [--all], set <name>, show)
       install         Install executable, configs, and LaunchDaemon (requires sudo)
       uninstall       Uninstall service, configs, and revert system routing (requires sudo)
       daemon          Internal: run supervisor daemon in foreground (managed by launchd)
@@ -27,14 +27,14 @@ func printUsage() {
     Examples:
       routun status
       routun optimize
+      routun optimize --quick
       routun profile list
-      routun profile set simple-split
+      routun profile list --all
+      routun profile set fake-ttl3-disorder-2s
       sudo routun start
       sudo routun stop
       sudo routun restart
       routun logs -f
-      routun doctor
-      sudo routun uninstall
     """)
 }
 
@@ -62,7 +62,8 @@ case "restart":
 
 case "optimize", "blockcheck":
     let verbose = args.contains("-v") || args.contains("--verbose")
-    RoutunCommands.optimize(verbose: verbose)
+    let quick = args.contains("-q") || args.contains("--quick")
+    RoutunCommands.optimize(verbose: verbose, quick: quick)
 
 case "profile", "strategy":
     let subAction = args.count > 2 ? args[2] : nil
