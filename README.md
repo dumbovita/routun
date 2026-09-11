@@ -25,6 +25,10 @@ A lightweight background service coordinating ByeDPI (`ciadpi`) and Sing-box (`u
 ### Homebrew (Recommended)
 
 ```bash
+# Trust the repository (required by Homebrew 6.0+)
+brew trust https://github.com/dumbovita/routun
+
+# Tap and install
 brew tap dumbovita/routun https://github.com/dumbovita/routun
 brew install routun
 sudo brew services start routun

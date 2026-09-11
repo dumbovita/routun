@@ -7,8 +7,8 @@ class Routun < Formula
   head "https://github.com/dumbovita/routun.git", branch: "main"
 
   depends_on :macos
-  depends_on xcode: ["16.0", :build]
   depends_on "sing-box"
+  uses_from_macos "swift" => :build
 
   def install
     system "swiftc", "-O", *Dir["Sources/*.swift"], "-o", "routun"
@@ -22,9 +22,9 @@ class Routun < Formula
     (var/"run").mkpath
   end
 
-  def post_install
-    (var/"log/routun").mkpath
-    (var/"run").mkpath
+  post_install_steps do
+    mkdir_p "log/routun", base: :var
+    mkdir_p "run", base: :var
   end
 
   service do
