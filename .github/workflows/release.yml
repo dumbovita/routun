@@ -142,7 +142,7 @@ jobs:
         env:
           VERSION: ${{ steps.prep.outputs.version }}
 
-      - name: Create GitHub Release
+      - name: Create or Update GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.prep.outputs.tag }}
@@ -150,11 +150,16 @@ jobs:
         run: |
           ARTIFACT="routun-v${VERSION}-macos-universal.tar.gz"
           echo "Publishing GitHub Release for ${TAG}..."
-          gh release create "${TAG}" \
-            --title "routun ${TAG}" \
-            --generate-notes \
-            "${ARTIFACT}" \
-            "${ARTIFACT}.sha256"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists, uploading artifacts..."
+            gh release upload "${TAG}" "${ARTIFACT}" "${ARTIFACT}.sha256" --clobber
+          else
+            gh release create "${TAG}" \
+              --title "routun ${TAG}" \
+              --generate-notes \
+              "${ARTIFACT}" \
+              "${ARTIFACT}.sha256"
+          fi
 
       - name: Download Official Release Archive & Compute SHA-256
         id: archive
