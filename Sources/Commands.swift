@@ -294,7 +294,7 @@ public final class RoutunCommands {
         print("\(green)routun has been completely uninstalled from this system.\(reset)")
     }
 
-    public static func optimize(verbose: Bool = false, quick: Bool = false) {
+    public static func optimize(verbose: Bool = false, quick: Bool = false, customTargets: [String] = []) {
         let config = RoutunConfig.load()
         guard FileManager.default.isExecutableFile(atPath: config.ciadpiPath) else {
             print("\(red)Error:\(reset) ByeDPI (ciadpi) binary not found at \(config.ciadpiPath).")
@@ -302,7 +302,13 @@ public final class RoutunCommands {
             exit(1)
         }
 
-        let optimizer = StrategyOptimizer(ciadpiPath: config.ciadpiPath, verbose: verbose, quick: quick)
+        let parsedCustom = StrategyTarget.parseList(from: customTargets)
+        let optimizer = StrategyOptimizer(
+            ciadpiPath: config.ciadpiPath,
+            verbose: verbose,
+            quick: quick,
+            customTargets: parsedCustom
+        )
         guard let selected = optimizer.run() else {
             print("\(yellow)Optimization completed without selecting a new profile. Preserving existing configuration.\(reset)")
             return

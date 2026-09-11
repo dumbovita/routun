@@ -33,6 +33,9 @@
   "route": {
     "rules": [
       {
+        "action": "sniff"
+      },
+      {
         "process_name": [
           "ciadpi"
         ],
@@ -61,6 +64,24 @@
       },
       {
         "network": "udp",
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "domain_suffix": [
+          ".gov.tr",
+          ".edu.tr",
+          ".gov",
+          ".edu",
+          ".k12.tr",
+          ".bel.tr",
+          ".pol.tr",
+          ".mil.tr"
+        ],
+        "domain_keyword": [
+          "gov",
+          "edu"
+        ],
         "action": "route",
         "outbound": "direct"
       },

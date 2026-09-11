@@ -38,7 +38,23 @@ for path in "/opt/homebrew/bin/sing-box" "/usr/local/bin/sing-box" "$(command -v
 done
 
 if [ -z "$CIADPI_BIN" ]; then
-    echo "ERROR: 'ciadpi' (ByeDPI) executable not found."
+    echo "  'ciadpi' (ByeDPI) not found. Compiling ByeDPI v0.17.3 from source..."
+    TMP_DIR=$(mktemp -d)
+    if curl -sSL "https://github.com/hufrea/byedpi/archive/refs/tags/v0.17.3.tar.gz" -o "$TMP_DIR/byedpi.tar.gz"; then
+        tar -xzf "$TMP_DIR/byedpi.tar.gz" -C "$TMP_DIR"
+        if make -C "$TMP_DIR/byedpi-0.17.3" >/dev/null 2>&1; then
+            mkdir -p "/usr/local/bin"
+            cp -f "$TMP_DIR/byedpi-0.17.3/ciadpi" "/usr/local/bin/ciadpi"
+            chmod 755 "/usr/local/bin/ciadpi"
+            CIADPI_BIN="/usr/local/bin/ciadpi"
+            echo "  Successfully compiled and installed ciadpi to /usr/local/bin/ciadpi"
+        fi
+    fi
+    rm -rf "$TMP_DIR"
+fi
+
+if [ -z "$CIADPI_BIN" ]; then
+    echo "ERROR: 'ciadpi' (ByeDPI) executable not found and automatic compilation failed."
     echo "Please place 'ciadpi' in /usr/local/bin/ciadpi and make it executable (chmod +x)."
     exit 1
 fi

@@ -17,8 +17,8 @@ A lightweight background service coordinating ByeDPI (`ciadpi`) and Sing-box (`u
 - macOS 14.0 (Sonoma) or later (Apple Silicon & Intel)
 - Root / administrator privileges (`sudo` is required to create virtual `utun` interfaces and manage kernel routing tables)
 - [Homebrew](https://brew.sh) (recommended for package and service management)
-- [`ciadpi`](https://github.com/hufrea/byedpi) (ByeDPI) installed in your `PATH` (e.g. `/usr/local/bin/ciadpi` or `/opt/homebrew/bin/ciadpi`)
 - [`sing-box`](https://github.com/SagerNet/sing-box) (installed automatically as a dependency by Homebrew)
+- [`ciadpi`](https://github.com/hufrea/byedpi) (ByeDPI — built and installed automatically from source by Homebrew / `install.sh`)
 
 ## Installation
 
@@ -90,14 +90,17 @@ routun logs -f
 
 ### Strategy Optimization (Blockcheck)
 
-`routun` includes an automated strategy detector inspired by Zapret's `blockcheck`. It tests a comprehensive matrix of parameter combinations (pure splits, dual splits, SNI disorders, TLS record segmentation, fake TTL sweeps, and OOB data) against curated targets for **Turkey (BTK)**, **Russia (RKN)**, and **daily use services**, cross-referencing contenders across two verification rounds:
+`routun` includes an automated strategy detector inspired by Zapret's `blockcheck`. It tests a comprehensive matrix of parameter combinations (pure splits, dual splits, SNI disorders, TLS record segmentation, fake TTL sweeps, and OOB data) against curated global targets and daily use services, cross-referencing contenders across two verification rounds:
 
 ```bash
 # Auto-detect optimal strategy across 59 combinations with cross-referencing
 routun optimize
 
-# Fast screening mode (evaluates only canonical profiles)
-routun optimize --quick
+# Include custom target domains to verify they are not broken by DPI evasion
+routun optimize anadolu.edu.tr saglik.gov.tr
+
+# Fast screening mode with custom targets
+routun optimize --quick -t anadolu.edu.tr
 
 # Verbose mode with per-target connection and latency diagnostics
 routun optimize -v
@@ -146,7 +149,7 @@ Releases and Homebrew formula updates are fully automated via GitHub Actions:
 2. Select the version bump (`patch`, `minor`, `major`) or specify an explicit version.
 3. CI automatically validates the code, compiles universal binaries, creates the GitHub release, calculates SHA-256 checksums, and updates `Formula/routun.rb`.
 
-*(Alternatively, push a Git tag: `git tag v1.1.0 && git push origin v1.1.0`.)*
+*(Alternatively, push a Git tag: `git tag v1.2.0 && git push origin v1.2.0`.)*
 
 ## Contributing
 

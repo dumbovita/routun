@@ -10,7 +10,19 @@ class Routun < Formula
   depends_on "sing-box"
   uses_from_macos "swift" => :build
 
+  resource "byedpi" do
+    url "https://github.com/hufrea/byedpi/archive/refs/tags/v0.17.3.tar.gz"
+    sha256 "0a9cb8585554c68c3e2be88c33c9bf6f99f8e8c7f54b362285adab99e262566c"
+  end
+
   def install
+    # Build and install ByeDPI (ciadpi) from official source
+    resource("byedpi").stage do
+      system "make"
+      bin.install "ciadpi"
+    end
+
+    # Build and install routun
     system "swiftc", "-O", *Dir["Sources/*.swift"], "-o", "routun"
     bin.install "routun"
 
@@ -41,7 +53,6 @@ class Routun < Formula
       routun requires root privileges to manage virtual TUN interfaces:
         sudo brew services start routun
 
-      Ensure 'ciadpi' (ByeDPI) is installed in your PATH (e.g. /usr/local/bin/ciadpi).
       To verify operation:
         routun status
     EOS

@@ -1,6 +1,6 @@
 import Foundation
 
-let version = "1.1.0"
+let version = "1.2.0"
 
 func printUsage() {
     print("""
@@ -16,7 +16,7 @@ func printUsage() {
       restart         Restart the service and cleanly refresh network routing (requires sudo)
       logs            Display service logs (supports -f/--follow, -n <lines>, -e/--error)
       doctor          Run full system and environment diagnostic checks
-      optimize        Run automated DPI evasion optimization (supports -v/--verbose, -q/--quick)
+      optimize        Run automated DPI evasion optimization (supports -v, -q, and custom domains)
       profile         View or switch ByeDPI strategy profiles (list [--all], set <name>, show)
       install         Install executable, configs, and LaunchDaemon (requires sudo)
       uninstall       Uninstall service, configs, and revert system routing (requires sudo)
@@ -28,6 +28,8 @@ func printUsage() {
       routun status
       routun optimize
       routun optimize --quick
+      routun optimize anadolu.edu.tr saglik.gov.tr
+      routun optimize -v -t discord.com
       routun profile list
       routun profile list --all
       routun profile set fake-ttl3-disorder-2s
@@ -61,9 +63,28 @@ case "restart":
     RoutunCommands.restart()
 
 case "optimize", "blockcheck":
-    let verbose = args.contains("-v") || args.contains("--verbose")
-    let quick = args.contains("-q") || args.contains("--quick")
-    RoutunCommands.optimize(verbose: verbose, quick: quick)
+    var verbose = false
+    var quick = false
+    var customTargets = [String]()
+
+    var i = 2
+    while i < args.count {
+        let arg = args[i]
+        if arg == "-v" || arg == "--verbose" {
+            verbose = true
+        } else if arg == "-q" || arg == "--quick" {
+            quick = true
+        } else if arg == "-t" || arg == "--target" {
+            if i + 1 < args.count {
+                customTargets.append(args[i + 1])
+                i += 1
+            }
+        } else if !arg.hasPrefix("-") {
+            customTargets.append(arg)
+        }
+        i += 1
+    }
+    RoutunCommands.optimize(verbose: verbose, quick: quick, customTargets: customTargets)
 
 case "profile", "strategy":
     let subAction = args.count > 2 ? args[2] : nil
