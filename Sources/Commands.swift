@@ -45,6 +45,8 @@ public final class RoutunCommands {
         }
         let portStatus = socksOpen ? "\(green)listening on \(config.socksHost):\(config.socksPort)\(reset)" : "\(red)port \(config.socksPort) closed\(reset)"
         print("  ByeDPI:         \(ciadpiStatus) (\(portStatus))")
+        let activeProfile = config.selectedProfile ?? "default"
+        print("  Strategy:       \(bold)\(activeProfile)\(reset) (\(StrategyProfiles.find(by: activeProfile)?.name ?? "Custom"))")
 
         // 4. Sing-box Process & Interface
         let (tunExists, tunUp, tunIp) = NetUtils.getInterfaceInfo(name: config.tunInterface)
@@ -290,6 +292,100 @@ public final class RoutunCommands {
         _ = ServiceManager.shared.runCommand("/sbin/ifconfig", ["utun10", "down"])
         try? FileManager.default.removeItem(atPath: RoutunConfig.installedBinaryPath)
         print("\(green)routun has been completely uninstalled from this system.\(reset)")
+    }
+
+    public static func optimize(verbose: Bool = false) {
+        let config = RoutunConfig.load()
+        guard FileManager.default.isExecutableFile(atPath: config.ciadpiPath) else {
+            print("\(red)Error:\(reset) ByeDPI (ciadpi) binary not found at \(config.ciadpiPath).")
+            print("Please ensure ciadpi is installed before running optimization.")
+            exit(1)
+        }
+
+        let optimizer = StrategyOptimizer(ciadpiPath: config.ciadpiPath, verbose: verbose)
+        guard let selected = optimizer.run() else {
+            print("\(yellow)Optimization completed without selecting a new profile. Preserving existing configuration.\(reset)")
+            return
+        }
+
+        if StrategyOptimizer.saveProfile(selected) {
+            print("\(green)Saved strategy profile '\(selected.id)' to \(RoutunConfig.defaultConfigFile).\(reset)")
+        } else {
+            print("\(yellow)Warning: Could not save profile to \(RoutunConfig.defaultConfigFile). Run with sudo to persist.\(reset)")
+        }
+
+        // If the service is currently running, offer to reload/restart
+        let state = ServiceManager.shared.getStatus()
+        if state.isRunning {
+            print("\nThe routun service is currently running. Restarting service to apply '\(selected.id)'...")
+            if ensureRoot() {
+                restart()
+            } else {
+                print("To apply changes, restart the service: \(bold)sudo routun restart\(reset)")
+            }
+        }
+    }
+
+    public static func profile(action: String?, name: String?) {
+        let config = RoutunConfig.load()
+        let activeProfileId = config.selectedProfile ?? "default"
+
+        switch action?.lowercased() {
+        case "list":
+            print("\(bold)Supported ByeDPI Strategy Profiles:\(reset)")
+            print("------------------------------------------------------------")
+            for p in StrategyProfiles.all {
+                let isCurrent = (p.id == activeProfileId)
+                let marker = isCurrent ? "\(green)* (active)\(reset)" : "          "
+                let namePadded = p.id.padding(toLength: 16, withPad: " ", startingAt: 0)
+                print("  \(marker) \(bold)\(namePadded)\(reset) - \(p.description)")
+                print("                Args: \(p.args.joined(separator: " "))")
+            }
+            print("------------------------------------------------------------")
+            print("To switch profile: \(bold)routun profile set <name>\(reset)")
+
+        case "set":
+            guard let targetName = name, !targetName.isEmpty else {
+                print("\(red)Error:\(reset) Please specify a profile name. Run '\(bold)routun profile list\(reset)' to view options.")
+                exit(1)
+            }
+            guard let p = StrategyProfiles.find(by: targetName) else {
+                print("\(red)Error:\(reset) Unknown profile '\(targetName)'.")
+                print("Run '\(bold)routun profile list\(reset)' to see all supported profiles.")
+                exit(1)
+            }
+
+            if StrategyOptimizer.saveProfile(p) {
+                print("\(green)Switched active strategy profile to '\(p.id)' (\(p.name)).\(reset)")
+                print("  Parameters: \(p.args.joined(separator: " "))")
+                print("  Saved to:   \(RoutunConfig.defaultConfigFile)")
+
+                let state = ServiceManager.shared.getStatus()
+                if state.isRunning {
+                    print("\nService is running. Restarting service...")
+                    if ensureRoot() {
+                        restart()
+                    } else {
+                        print("Run '\(bold)sudo routun restart\(reset)' to apply changes.")
+                    }
+                }
+            } else {
+                print("\(red)Error:\(reset) Could not write to \(RoutunConfig.defaultConfigFile). Run with sudo if permission denied.")
+                exit(1)
+            }
+
+        case "show", nil:
+            let p = StrategyProfiles.find(by: activeProfileId) ?? StrategyProfiles.defaultProfile
+            print("\(bold)Active Strategy Profile:\(reset) \(green)\(p.id)\(reset) (\(p.name))")
+            print("  Description: \(p.description)")
+            print("  Parameters:  \(config.ciadpiArgs.joined(separator: " "))")
+            print("  Config File: \(RoutunConfig.defaultConfigFile)")
+            print("\nUse '\(bold)routun profile list\(reset)' to view all profiles or '\(bold)routun optimize\(reset)' to auto-detect.")
+
+        default:
+            print("\(red)Error:\(reset) Unknown profile action '\(action!)'. Use 'list', 'set <name>', or 'show'.")
+            exit(1)
+        }
     }
 
     private static func ensureRoot() -> Bool {

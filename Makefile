@@ -1,6 +1,6 @@
 SWIFTC = swiftc
 SWIFT_FLAGS = -O
-SOURCES = Sources/Config.swift Sources/Logger.swift Sources/NetUtils.swift Sources/Daemon.swift Sources/ServiceManager.swift Sources/Commands.swift Sources/main.swift
+SOURCES = Sources/Config.swift Sources/Logger.swift Sources/NetUtils.swift Sources/Daemon.swift Sources/ServiceManager.swift Sources/Blockcheck.swift Sources/Commands.swift Sources/main.swift
 TARGET = routun
 
 .PHONY: all build install uninstall clean status doctor logs restart

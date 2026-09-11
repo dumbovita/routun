@@ -88,6 +88,24 @@ routun doctor
 routun logs -f
 ```
 
+### Strategy Optimization (Blockcheck)
+
+`routun` includes an automated strategy detector inspired by Zapret's `blockcheck`. It establishes a baseline without desync, tests supported parameter profiles on an isolated test port, and selects the optimal profile for your network:
+
+```bash
+# Auto-detect and apply the best ByeDPI strategy profile
+routun optimize
+
+# View all supported strategy profiles
+routun profile list
+
+# Manually switch to a specific profile
+routun profile set simple-split
+
+# Inspect the active profile parameters
+routun profile show
+```
+
 ## Uninstallation
 
 ### Via Homebrew

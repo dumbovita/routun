@@ -124,6 +124,15 @@ sleep 2
 
 /usr/local/bin/routun status
 
+# Optional automatic strategy optimization
+if [ -t 0 ]; then
+    echo ""
+    read -r -p "Run automatic DPI strategy optimization (blockcheck) now? [y/N]: " OPT_CHOICE
+    if [[ "$OPT_CHOICE" =~ ^[Yy]$ ]]; then
+        /usr/local/bin/routun optimize
+    fi
+fi
+
 echo ""
 echo "============================================================"
 echo " routun installation and activation complete!"
@@ -131,6 +140,8 @@ echo " Service is running continuously under launchd management."
 echo ""
 echo " Useful commands:"
 echo "   routun status          - Check live service status & DPI health"
+echo "   routun optimize        - Auto-detect best ByeDPI strategy profile"
+echo "   routun profile list    - View and switch ByeDPI strategy profiles"
 echo "   sudo routun stop       - Stop service"
 echo "   sudo routun start      - Start service"
 echo "   sudo routun restart    - Clean restart"

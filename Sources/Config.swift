@@ -8,6 +8,7 @@ public struct RoutunConfig: Codable {
     public var socksPort: Int
     public var tunInterface: String
     public var singboxConfig: String
+    public var selectedProfile: String?
 
     enum CodingKeys: String, CodingKey {
         case ciadpiPath = "ciadpi_path"
@@ -17,6 +18,18 @@ public struct RoutunConfig: Codable {
         case socksPort = "socks_port"
         case tunInterface = "tun_interface"
         case singboxConfig = "singbox_config"
+        case selectedProfile = "selected_profile"
+    }
+
+    public func save(to path: String? = nil) throws {
+        let targetPath = path ?? RoutunConfig.defaultConfigFile
+        let parentDir = (targetPath as NSString).deletingLastPathComponent
+        try FileManager.default.createDirectory(atPath: parentDir, withIntermediateDirectories: true, attributes: nil)
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(self)
+        try data.write(to: URL(fileURLWithPath: targetPath), options: .atomic)
     }
 
     // Dynamic prefix detection (Homebrew Apple Silicon, Homebrew Intel, or Standalone)
@@ -184,7 +197,8 @@ public struct RoutunConfig: Codable {
             socksHost: "127.0.0.1",
             socksPort: 1080,
             tunInterface: "utun10",
-            singboxConfig: defaultSingboxConfigFile
+            singboxConfig: defaultSingboxConfigFile,
+            selectedProfile: "default"
         )
     }
 
