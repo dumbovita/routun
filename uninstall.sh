@@ -46,6 +46,7 @@ rm -f "/opt/homebrew/var/run/routun.pid"
 rm -rf "/var/log/routun"
 rm -f "/var/run/routun.pid"
 rm -f "/usr/local/bin/routun"
+rm -f "/usr/local/bin/ciadpi"
 rm -rf "/opt/homebrew/Cellar/routun"
 rm -rf "/opt/homebrew/opt/routun"
 
