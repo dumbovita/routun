@@ -75,7 +75,20 @@
       {
         "domain_keyword": [
           "gov",
-          "edu"
+          "edu",
+          "microsoft",
+          "xboxlive",
+          "msauth",
+          "msftauth"
+        ],
+        "domain_suffix": [
+          ".microsoft.com",
+          ".live.com",
+          ".office.com",
+          ".office365.com",
+          ".xboxlive.com",
+          ".msauth.net",
+          ".msftauth.net"
         ],
         "action": "route",
         "outbound": "direct"

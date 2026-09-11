@@ -107,7 +107,12 @@ public enum StrategyTargets {
         StrategyTarget(name: "Wikipedia", host: "wikipedia.org", port: 443, path: "/"),
         StrategyTarget(name: "Spotify", host: "spotify.com", port: 443, path: "/"),
         StrategyTarget(name: "Twitch", host: "twitch.tv", port: 443, path: "/"),
-        StrategyTarget(name: "Cloudflare", host: "cloudflare.com", port: 443, path: "/")
+        StrategyTarget(name: "Cloudflare", host: "cloudflare.com", port: 443, path: "/"),
+
+        // Microsoft & Windows consumer / authentication services
+        StrategyTarget(name: "Microsoft Login", host: "login.microsoftonline.com", port: 443, path: "/"),
+        StrategyTarget(name: "Microsoft Live", host: "login.live.com", port: 443, path: "/"),
+        StrategyTarget(name: "Xbox Live Auth", host: "user.auth.xboxlive.com", port: 443, path: "/")
     ]
 }
 
