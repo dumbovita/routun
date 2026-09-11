@@ -33,7 +33,12 @@
   "route": {
     "rules": [
       {
-        "action": "sniff"
+        "action": "sniff",
+        "sniffer": [
+          "tls",
+          "http"
+        ],
+        "timeout": "500ms"
       },
       {
         "process_name": [
@@ -68,16 +73,6 @@
         "outbound": "direct"
       },
       {
-        "domain_suffix": [
-          ".gov.tr",
-          ".edu.tr",
-          ".gov",
-          ".edu",
-          ".k12.tr",
-          ".bel.tr",
-          ".pol.tr",
-          ".mil.tr"
-        ],
         "domain_keyword": [
           "gov",
           "edu"
