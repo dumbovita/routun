@@ -323,11 +323,11 @@ public final class RoutunCommands {
         // If the service is currently running, offer to reload/restart
         let state = ServiceManager.shared.getStatus()
         if state.isRunning {
-            print("\nThe routun service is currently running. Restarting service to apply '\(selected.id)'...")
-            if ensureRoot() {
+            if geteuid() == 0 {
+                print("\nRestarting service to apply '\(selected.id)'...")
                 restart()
             } else {
-                print("To apply changes, restart the service: \(bold)sudo routun restart\(reset)")
+                print("\nTo apply '\(selected.id)', restart the service: \(bold)sudo routun restart\(reset)")
             }
         }
     }
@@ -375,11 +375,11 @@ public final class RoutunCommands {
 
                 let state = ServiceManager.shared.getStatus()
                 if state.isRunning {
-                    print("\nService is running. Restarting service...")
-                    if ensureRoot() {
+                    if geteuid() == 0 {
+                        print("\nRestarting service...")
                         restart()
                     } else {
-                        print("Run '\(bold)sudo routun restart\(reset)' to apply changes.")
+                        print("\nTo apply changes, restart the service: \(bold)sudo routun restart\(reset)")
                     }
                 }
             } else {
