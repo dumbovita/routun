@@ -79,12 +79,14 @@ public struct RoutunConfig: Codable {
 
     // Service identification (detects Homebrew service or standalone)
     public static var isHomebrewService: Bool {
-        FileManager.default.fileExists(atPath: "/Library/LaunchDaemons/homebrew.mxcl.routun.plist")
+        FileManager.default.fileExists(atPath: "/Library/LaunchDaemons/sh.brew.routun.plist")
+            || FileManager.default.fileExists(atPath: "/Library/LaunchDaemons/homebrew.mxcl.routun.plist")
     }
 
     public static var installedPlistPath: String? {
         let fm = FileManager.default
         let candidates = [
+            "/Library/LaunchDaemons/sh.brew.routun.plist",
             "/Library/LaunchDaemons/homebrew.mxcl.routun.plist",
             "/Library/LaunchDaemons/com.routun.routund.plist",
             "/Library/LaunchDaemons/com.routun.daemon.plist"
@@ -96,12 +98,17 @@ public struct RoutunConfig: Codable {
     }
 
     public static var serviceLabel: String {
-        if isHomebrewService {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: "/Library/LaunchDaemons/sh.brew.routun.plist") {
+            return "sh.brew.routun"
+        }
+        if fm.fileExists(atPath: "/Library/LaunchDaemons/homebrew.mxcl.routun.plist") {
             return "homebrew.mxcl.routun"
         }
         if let plist = installedPlistPath {
-            if plist.contains("daemon") { return "com.routun.daemon" }
+            if plist.contains("sh.brew") { return "sh.brew.routun" }
             if plist.contains("homebrew") { return "homebrew.mxcl.routun" }
+            if plist.contains("daemon") { return "com.routun.daemon" }
         }
         return "com.routun.routund"
     }

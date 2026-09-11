@@ -13,8 +13,23 @@ public final class ServiceManager {
     public static let shared = ServiceManager()
 
     public func getStatus() -> ServiceState {
-        let (code, output) = runCommand("/bin/launchctl", ["print", "system/\(RoutunConfig.serviceLabel)"])
-        let isLoaded = (code == 0)
+        var isLoaded = false
+        var output = ""
+        let candidateLabels = [
+            RoutunConfig.serviceLabel,
+            "sh.brew.routun",
+            "homebrew.mxcl.routun",
+            "com.routun.routund",
+            "com.routun.daemon"
+        ]
+        for label in candidateLabels {
+            let (code, out) = runCommand("/bin/launchctl", ["print", "system/\(label)"])
+            if code == 0 {
+                isLoaded = true
+                output = out
+                break
+            }
+        }
         var isRunning = false
         var supervisorPid: Int?
         var ciadpiPid: Int?
