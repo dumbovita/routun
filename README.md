@@ -137,7 +137,7 @@ Releases and Homebrew formula updates are fully automated via GitHub Actions:
 2. Select the version bump (`patch`, `minor`, `major`) or specify an explicit version.
 3. CI automatically validates the code, compiles universal binaries, creates the GitHub release, calculates SHA-256 checksums, and updates `Formula/routun.rb`.
 
-*(Alternatively, push a Git tag: `git tag v1.0.1 && git push origin v1.0.1`.)*
+*(Alternatively, push a Git tag: `git tag v1.1.0 && git push origin v1.1.0`.)*
 
 ## Contributing
 
