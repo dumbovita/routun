@@ -137,7 +137,7 @@ jobs:
           git add Sources/main.swift
           git commit -m "chore(release): v${VERSION} [skip ci]" || echo "Version already up to date"
           git tag -a "${TAG}" -m "Release ${TAG}"
-          git push origin main
+          git push origin HEAD:main
           git push origin "${TAG}"
         env:
           VERSION: ${{ steps.prep.outputs.version }}
@@ -205,7 +205,8 @@ jobs:
           ruby -c Formula/routun.rb
           git add Formula/routun.rb
           git commit -m "chore(brew): update routun formula to v${VERSION} [skip ci]" || echo "Formula unchanged"
-          git push origin main
+          git fetch origin main
+          git push origin HEAD:main
 
       - name: Sync External Homebrew Tap (Optional)
         if: env.HAS_TAP_TOKEN == 'true' && env.TAP_REPO != ''
