@@ -79,17 +79,57 @@ public final class ServiceManager {
         )
     }
 
+    public func installLaunchDaemonPlist(at path: String) {
+        let binPath = RoutunConfig.executableBinaryPath
+        let label = RoutunConfig.serviceLabel
+        let logPath = RoutunConfig.daemonLogFile
+        let errPath = RoutunConfig.daemonErrFile
+
+        let plistContent = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>Label</key>
+            <string>\(label)</string>
+            <key>ProgramArguments</key>
+            <array>
+                <string>\(binPath)</string>
+                <string>daemon</string>
+            </array>
+            <key>RunAtLoad</key>
+            <true/>
+            <key>KeepAlive</key>
+            <dict>
+                <key>SuccessfulExit</key>
+                <false/>
+            </dict>
+            <key>StandardOutPath</key>
+            <string>\(logPath)</string>
+            <key>StandardErrorPath</key>
+            <string>\(errPath)</string>
+            <key>ProcessType</key>
+            <string>Standard</string>
+        </dict>
+        </plist>
+        """
+
+        try? plistContent.write(toFile: path, atomically: true, encoding: .utf8)
+        chmod(path, 0o644)
+    }
+
     public func start() -> (success: Bool, message: String) {
-        guard FileManager.default.fileExists(atPath: RoutunConfig.launchDaemonPlist) else {
-            return (false, "LaunchDaemon plist not found at \(RoutunConfig.launchDaemonPlist). Run 'routun install' first.")
+        let plistPath = RoutunConfig.launchDaemonPlist
+        if !FileManager.default.fileExists(atPath: plistPath) {
+            installLaunchDaemonPlist(at: plistPath)
         }
 
         // Bootstrap service into launchd system domain
-        let (bCode, bOut) = runCommand("/bin/launchctl", ["bootstrap", "system", RoutunConfig.launchDaemonPlist])
+        let (bCode, bOut) = runCommand("/bin/launchctl", ["bootstrap", "system", plistPath])
         let alreadyLoaded = bOut.contains("service already bootstrapped") || bOut.contains("Already loaded") || bCode == 5 || bCode == 37
 
         if bCode != 0 && !alreadyLoaded {
-            let (lCode, lOut) = runCommand("/bin/launchctl", ["load", "-w", RoutunConfig.launchDaemonPlist])
+            let (lCode, lOut) = runCommand("/bin/launchctl", ["load", "-w", plistPath])
             if lCode != 0 && !lOut.contains("Already loaded") {
                 return (false, "launchctl bootstrap failed: \(bOut.isEmpty ? lOut : bOut)")
             }
@@ -111,13 +151,29 @@ public final class ServiceManager {
     }
 
     public func stop() -> (success: Bool, message: String) {
-        let (bCode, _) = runCommand("/bin/launchctl", ["bootout", "system/\(RoutunConfig.serviceLabel)"])
-        if bCode != 0 {
-            _ = runCommand("/bin/launchctl", ["unload", RoutunConfig.launchDaemonPlist])
+        let candidateLabels = [
+            RoutunConfig.serviceLabel,
+            "sh.brew.routun",
+            "homebrew.mxcl.routun",
+            "com.routun.routund",
+            "com.routun.daemon"
+        ]
+        for label in candidateLabels {
+            _ = runCommand("/bin/launchctl", ["bootout", "system/\(label)"])
+        }
+        if let plist = RoutunConfig.installedPlistPath {
+            _ = runCommand("/bin/launchctl", ["unload", plist])
         }
 
+        // Stop any standalone background processes gracefully
+        _ = runCommand("/usr/bin/killall", ["-TERM", "sing-box"])
+        _ = runCommand("/usr/bin/killall", ["-TERM", "ciadpi"])
+        _ = runCommand("/sbin/ifconfig", ["utun10", "down"])
+
+        try? FileManager.default.removeItem(atPath: RoutunConfig.pidFile)
+
         // Wait until service is completely unloaded from system domain
-        for _ in 0..<30 {
+        for _ in 0..<20 {
             let (pCode, _) = runCommand("/bin/launchctl", ["print", "system/\(RoutunConfig.serviceLabel)"])
             if pCode != 0 {
                 return (true, "Service stopped via launchd.")

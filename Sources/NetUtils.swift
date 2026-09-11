@@ -126,4 +126,9 @@ public final class NetUtils {
 
         return (resultSuccess, resultMessage)
     }
+
+    public static func isProcessAlive(pid: Int) -> Bool {
+        if kill(pid_t(pid), 0) == 0 { return true }
+        return errno == EPERM
+    }
 }

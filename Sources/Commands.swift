@@ -24,7 +24,7 @@ public final class RoutunCommands {
         print("  LaunchDaemon:   \(daemonStatusStr)")
 
         // 2. Supervisor Process
-        if state.isRunning, let sPid = state.supervisorPid, kill(pid_t(sPid), 0) == 0 {
+        if state.isRunning, let sPid = state.supervisorPid, NetUtils.isProcessAlive(pid: sPid) {
             let startedStr = state.startedAt != nil ? " since \(state.startedAt!)" : ""
             print("  Supervisor:     \(green)active (running)\(reset) [PID \(sPid)]\(startedStr)")
         } else {
@@ -34,7 +34,7 @@ public final class RoutunCommands {
         // 3. ByeDPI (ciadpi) Process & Port
         let socksOpen = NetUtils.isPortOpen(host: config.socksHost, port: config.socksPort, timeout: 0.3)
         var ciadpiStatus = "not running"
-        if let cPid = state.ciadpiPid, kill(pid_t(cPid), 0) == 0 {
+        if let cPid = state.ciadpiPid, NetUtils.isProcessAlive(pid: cPid) {
             ciadpiStatus = "PID \(cPid) (managed)"
         } else {
             let (code, out) = ServiceManager.shared.runCommand("/usr/bin/pgrep", ["-x", "ciadpi"])
@@ -49,7 +49,7 @@ public final class RoutunCommands {
         // 4. Sing-box Process & Interface
         let (tunExists, tunUp, tunIp) = NetUtils.getInterfaceInfo(name: config.tunInterface)
         var singboxStatus = "not running"
-        if let sPid = state.singboxPid, kill(pid_t(sPid), 0) == 0 {
+        if let sPid = state.singboxPid, NetUtils.isProcessAlive(pid: sPid) {
             singboxStatus = "PID \(sPid) (managed)"
         } else {
             let (code, out) = ServiceManager.shared.runCommand("/usr/bin/pgrep", ["-x", "sing-box"])
@@ -263,7 +263,16 @@ public final class RoutunCommands {
             proc.waitUntilExit()
             exit(proc.terminationStatus)
         } else {
-            print("\(red)Error:\(reset) install.sh not found. Run from the routun repository directory.")
+            print("\(cyan)Setting up routun LaunchDaemon and system service...\(reset)")
+            ServiceManager.shared.installLaunchDaemonPlist(at: RoutunConfig.launchDaemonPlist)
+            let result = ServiceManager.shared.start()
+            if result.success {
+                print("\(green)routun service installed and started successfully.\(reset)")
+                sleep(2)
+                status()
+            } else {
+                print("\(red)Error installing service:\(reset) \(result.message)")
+            }
         }
     }
 

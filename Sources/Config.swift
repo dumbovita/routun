@@ -113,9 +113,25 @@ public struct RoutunConfig: Codable {
         return "com.routun.routund"
     }
 
+    public static var executableBinaryPath: String {
+        if let prefix = homebrewPrefix {
+            let brewOpt = "\(prefix)/opt/routun/bin/routun"
+            if FileManager.default.fileExists(atPath: brewOpt) { return brewOpt }
+            let brewBin = "\(prefix)/bin/routun"
+            if FileManager.default.fileExists(atPath: brewBin) { return brewBin }
+        }
+        if FileManager.default.fileExists(atPath: installedBinaryPath) {
+            return installedBinaryPath
+        }
+        return Bundle.main.executablePath ?? "/usr/local/bin/routun"
+    }
+
     public static var launchDaemonPlist: String {
         if let installed = installedPlistPath {
             return installed
+        }
+        if isHomebrewService || (homebrewPrefix != nil && FileManager.default.fileExists(atPath: "\(homebrewPrefix!)/opt/routun")) {
+            return "/Library/LaunchDaemons/sh.brew.routun.plist"
         }
         return "/Library/LaunchDaemons/com.routun.routund.plist"
     }
