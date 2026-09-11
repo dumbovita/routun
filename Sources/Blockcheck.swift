@@ -112,7 +112,11 @@ public enum StrategyTargets {
         // Microsoft & Windows consumer / authentication services
         StrategyTarget(name: "Microsoft Login", host: "login.microsoftonline.com", port: 443, path: "/"),
         StrategyTarget(name: "Microsoft Live", host: "login.live.com", port: 443, path: "/"),
-        StrategyTarget(name: "Xbox Live Auth", host: "user.auth.xboxlive.com", port: 443, path: "/")
+        StrategyTarget(name: "Xbox Live Auth", host: "user.auth.xboxlive.com", port: 443, path: "/"),
+
+        // Sensitive education & government portals (strict TLS/WAF compatibility verification)
+        StrategyTarget(name: "Anadolu University", host: "anadolu.edu.tr", port: 443, path: "/"),
+        StrategyTarget(name: "Saglik Bakanligi", host: "saglik.gov.tr", port: 443, path: "/")
     ]
 }
 
@@ -135,9 +139,9 @@ public struct StrategyProfile: Equatable {
         self.complexity = complexity
     }
 
-    /// Complete ByeDPI command line arguments with binding and listen port
+    /// Complete ByeDPI command line arguments with binding, listen port, and adaptive evasion
     public func fullArgs(host: String = "127.0.0.1", port: Int = 1080, maxConn: Int = 512) -> [String] {
-        return ["-i", host, "-p", String(port)] + args + ["-c", String(maxConn)]
+        return ["-i", host, "-p", String(port), "-A", "torst,ssl_err"] + args + ["-c", String(maxConn)]
     }
 }
 
@@ -358,10 +362,35 @@ public final class StrategyOptimizer {
 
     private let physicalInterface: String?
 
-    public init(ciadpiPath: String? = nil, testPort: Int = 1085, verbose: Bool = false, quick: Bool = false, customTargets: [StrategyTarget] = []) {
+    public static func findFreePort() -> Int {
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        let sock = socket(AF_INET, SOCK_STREAM, 0)
+        guard sock >= 0 else { return 10885 }
+        defer { close(sock) }
+        var bound = false
+        withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bound = (bind(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0)
+            }
+        }
+        guard bound else { return 10885 }
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                _ = getsockname(sock, $0, &len)
+            }
+        }
+        let port = Int(UInt16(bigEndian: addr.sin_port))
+        return port > 1024 ? port : 10885
+    }
+
+    public init(ciadpiPath: String? = nil, testPort: Int? = nil, verbose: Bool = false, quick: Bool = false, customTargets: [StrategyTarget] = []) {
         let config = RoutunConfig.load()
         self.ciadpiPath = ciadpiPath ?? config.ciadpiPath
-        self.testPort = testPort
+        self.testPort = testPort ?? StrategyOptimizer.findFreePort()
         self.verbose = verbose
         self.quick = quick
         self.customTargets = customTargets
@@ -397,16 +426,17 @@ public final class StrategyOptimizer {
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
 
         var args = [
+            "-I",
             "-s",
             "-o", "/dev/null",
             "-w", "%{http_code} %{time_total}",
-            "--connect-timeout", "1.5",
-            "--max-time", String(format: "%.1f", timeout),
+            "--connect-timeout", "2.5",
+            "--max-time", String(format: "%.1f", max(timeout, 3.0)),
             "-A", "Mozilla/5.0 (Macintosh; Apple Mac OS X) routun-blockcheck/2.0"
         ]
 
         if let port = socksPort {
-            args += ["--socks5-hostname", "127.0.0.1:\(port)"]
+            args += ["--socks5", "127.0.0.1:\(port)"]
         } else if let iface = physicalInterface {
             args += ["--interface", iface]
         }
@@ -429,10 +459,10 @@ public final class StrategyOptimizer {
             let parts = output.components(separatedBy: " ")
 
             let statusCode = parts.first.flatMap { Int($0) } ?? 0
-            let isReachable = (exitCode == 0) && (statusCode > 0 && statusCode < 500)
+            let isReachable = (statusCode > 0 && statusCode < 500)
 
             var detail = "HTTP \(statusCode)"
-            if exitCode != 0 {
+            if !isReachable {
                 switch exitCode {
                 case 28: detail = "Timeout"
                 case 35: detail = "TLS Handshake Blocked (DPI)"
@@ -515,9 +545,15 @@ public final class StrategyOptimizer {
     private func spawnTestCiadpi(profile: StrategyProfile, port: Int) -> Process? {
         guard FileManager.default.isExecutableFile(atPath: ciadpiPath) else { return nil }
 
+        // Ensure port is not lingering from a previous failed instance
+        if NetUtils.isPortOpen(host: "127.0.0.1", port: port, timeout: 0.05) {
+            _ = ServiceManager.shared.runCommand("/usr/bin/pkill", ["-9", "-f", "ciadpi.*\(port)"])
+            usleep(80_000)
+        }
+
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: ciadpiPath)
-        proc.arguments = ["-i", "127.0.0.1", "-p", String(port)] + profile.args + ["-c", "64"]
+        proc.arguments = ["-i", "127.0.0.1", "-p", String(port), "-A", "torst,ssl_err"] + profile.args + ["-c", "64"]
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice
 
@@ -527,8 +563,9 @@ public final class StrategyOptimizer {
             return nil
         }
 
-        // Wait up to 600ms for the test port to start listening
-        for _ in 0..<6 {
+        // Wait up to 800ms for this specific process to start listening
+        for _ in 0..<8 {
+            guard proc.isRunning else { return nil }
             if NetUtils.isPortOpen(host: "127.0.0.1", port: port, timeout: 0.1) {
                 return proc
             }
@@ -540,17 +577,22 @@ public final class StrategyOptimizer {
     }
 
     /// Cleanly terminate a process with SIGTERM and SIGKILL fallback
-    private func terminateProcess(_ proc: Process) {
+    private func terminateProcess(_ proc: Process, port: Int? = nil) {
+        let p = port ?? testPort
         if proc.isRunning {
             proc.terminate()
             for _ in 0..<5 {
-                if !proc.isRunning { return }
-                usleep(40_000)
+                if !proc.isRunning { break }
+                usleep(30_000)
             }
             if proc.isRunning {
                 kill(proc.processIdentifier, SIGKILL)
                 proc.waitUntilExit()
             }
+        }
+        if NetUtils.isPortOpen(host: "127.0.0.1", port: p, timeout: 0.05) {
+            _ = ServiceManager.shared.runCommand("/usr/bin/pkill", ["-9", "-f", "ciadpi.*\(p)"])
+            usleep(50_000)
         }
     }
 
@@ -674,6 +716,14 @@ public final class StrategyOptimizer {
                     }
                 } else if res.exitCode == 28 {
                     timeouts += 1
+                }
+            }
+
+            if verbose {
+                for res in probeResults {
+                    let sym = res.isReachable ? "\u{001B}[32m✓\u{001B}[0m" : "\u{001B}[31m✗\u{001B}[0m"
+                    let col = res.isReachable ? "\u{001B}[32m" : "\u{001B}[31m"
+                    emit("      \(sym) \(res.target.host.padding(toLength: 26, withPad: " ", startingAt: 0)): \(col)\(res.detail)\u{001B}[0m (\(res.latencyMs)ms)")
                 }
             }
 

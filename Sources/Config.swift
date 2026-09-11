@@ -193,7 +193,7 @@ public struct RoutunConfig: Codable {
         return RoutunConfig(
             ciadpiPath: ciadpi,
             singboxPath: singbox,
-            ciadpiArgs: ["-i", "127.0.0.1", "-p", "1080", "-s", "1", "-d", "3+s", "-r", "1+s", "-t", "3", "-c", "512"],
+            ciadpiArgs: ["-i", "127.0.0.1", "-p", "1080", "-A", "torst,ssl_err", "-s", "1", "-d", "3+s", "-r", "1+s", "-t", "3", "-c", "512"],
             socksHost: "127.0.0.1",
             socksPort: 1080,
             tunInterface: "utun10",
@@ -247,6 +247,15 @@ public struct RoutunConfig: Codable {
             if config.singboxPath.isEmpty || !isExecutableBinary(atPath: config.singboxPath) {
                 if let found = findBinary(named: "sing-box", searchPaths: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) {
                     config.singboxPath = found
+                }
+            }
+            if !config.ciadpiArgs.contains("-A") && !config.ciadpiArgs.contains("--auto") {
+                if let profileId = config.selectedProfile, let p = StrategyProfiles.find(by: profileId) {
+                    config.ciadpiArgs = p.fullArgs(host: config.socksHost, port: config.socksPort)
+                } else if let pIdx = config.ciadpiArgs.firstIndex(of: "-p"), pIdx + 1 < config.ciadpiArgs.count {
+                    config.ciadpiArgs.insert(contentsOf: ["-A", "torst,ssl_err"], at: pIdx + 2)
+                } else {
+                    config.ciadpiArgs.insert(contentsOf: ["-A", "torst,ssl_err"], at: 0)
                 }
             }
             return config

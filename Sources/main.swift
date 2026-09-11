@@ -1,6 +1,6 @@
 import Foundation
 
-let version = "1.2.3"
+let version = "1.2.4"
 
 func printUsage() {
     print("""
