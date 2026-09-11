@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.routun.routund</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/routun</string>
+        <string>daemon</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>10240</integer>
+    </dict>
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>10240</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/var/log/routun/daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/routun/daemon.err</string>
+    <key>ProcessType</key>
+    <string>Standard</string>
+</dict>
+</plist>

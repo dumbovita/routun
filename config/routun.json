@@ -1,0 +1,17 @@
+{
+  "ciadpi_path": "",
+  "singbox_path": "",
+  "ciadpi_args": [
+    "-i", "127.0.0.1",
+    "-p", "1080",
+    "-s", "1",
+    "-d", "3+s",
+    "-r", "1+s",
+    "-t", "3",
+    "-c", "512"
+  ],
+  "socks_host": "127.0.0.1",
+  "socks_port": 1080,
+  "tun_interface": "utun10",
+  "singbox_config": ""
+}

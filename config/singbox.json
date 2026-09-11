@@ -1,0 +1,80 @@
+{
+  "$schema": "https://sing-box.sagernet.org/schema.json",
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "utun10",
+      "address": [
+        "172.19.0.1/30"
+      ],
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "system",
+      "dns_mode": "disabled"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "socks",
+      "tag": "byedpi-out",
+      "server": "127.0.0.1",
+      "server_port": 1080
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "process_name": [
+          "ciadpi"
+        ],
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "process_path": [
+          "/usr/local/bin/ciadpi",
+          "/opt/homebrew/bin/ciadpi"
+        ],
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "ip_is_private": true,
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "network": "udp",
+        "port": 443,
+        "action": "reject",
+        "method": "default",
+        "no_drop": true
+      },
+      {
+        "network": "udp",
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "network": "tcp",
+        "port": [
+          80,
+          443
+        ],
+        "action": "route",
+        "outbound": "byedpi-out"
+      }
+    ],
+    "final": "direct",
+    "auto_detect_interface": true
+  }
+}

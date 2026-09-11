@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Build & Validate
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build with SwiftPM
+        run: swift build -c release
+
+      - name: Build Universal Binary
+        run: |
+          swiftc -O -target arm64-apple-macos14.0 Sources/*.swift -o routun-arm64
+          swiftc -O -target x86_64-apple-macos14.0 Sources/*.swift -o routun-x86_64
+          lipo -create -output routun-universal routun-arm64 routun-x86_64
+          file routun-universal
+          rm -f routun-arm64 routun-x86_64 routun-universal
+
+      - name: Build with Makefile
+        run: make build
+
+      - name: Test CLI Commands
+        run: |
+          ./routun --version
+          ./routun --help
+          ./routun doctor
+
+      - name: Validate Configurations & Plists
+        run: |
+          plutil -lint com.routun.routund.plist
+          python3 -m json.tool config/routun.json > /dev/null
+          python3 -m json.tool config/singbox.json > /dev/null
+
+      - name: Validate Homebrew Formula Syntax
+        run: ruby -c Formula/routun.rb

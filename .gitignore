@@ -1,0 +1,14 @@
+# Binaries
+routun
+*.o
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.swp
+*~
+
+# SwiftPM
+.build/
+.swiftpm/

@@ -1,0 +1,53 @@
+class Routun < Formula
+  desc "Transparent TUN-based network routing for macOS"
+  homepage "https://github.com/dumbovita/routun"
+  url "https://github.com/dumbovita/routun/archive/refs/tags/v1.0.0.tar.gz"
+  license "MIT"
+  head "https://github.com/dumbovita/routun.git", branch: "main"
+
+  depends_on :macos
+  depends_on xcode: ["16.0", :build]
+  depends_on "sing-box"
+
+  def install
+    system "swiftc", "-O", *Dir["Sources/*.swift"], "-o", "routun"
+    bin.install "routun"
+
+    # Install configuration files into etc/routun (preserved on upgrades)
+    (etc/"routun").install "config/singbox.json", "config/routun.json"
+
+    # Ensure log and runtime directories exist under HOMEBREW_PREFIX/var
+    (var/"log/routun").mkpath
+    (var/"run").mkpath
+  end
+
+  def post_install
+    (var/"log/routun").mkpath
+    (var/"run").mkpath
+  end
+
+  service do
+    run [opt_bin/"routun", "daemon"]
+    require_root true
+    keep_alive successful_exit: false
+    log_path var/"log/routun/daemon.log"
+    error_log_path var/"log/routun/daemon.err"
+    working_dir var
+  end
+
+  def caveats
+    <<~EOS
+      routun requires root privileges to manage virtual TUN interfaces:
+        sudo brew services start routun
+
+      Ensure 'ciadpi' (ByeDPI) is installed in your PATH (e.g. /usr/local/bin/ciadpi).
+      To verify operation:
+        routun status
+    EOS
+  end
+
+  test do
+    assert_match "routun version", shell_output("#{bin}/routun --version")
+    assert_match "Usage:", shell_output("#{bin}/routun --help")
+  end
+end

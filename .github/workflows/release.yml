@@ -1,0 +1,227 @@
+name: Release & Homebrew Distribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semantic version to release (e.g. 1.0.1). Leave blank to auto-increment.'
+        required: false
+        default: ''
+      bump:
+        description: 'Version increment type if version is blank'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, Release & Update Formula
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Determine Release Version
+        id: prep
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+            IS_TAG_PUSH="true"
+          else
+            IS_TAG_PUSH="false"
+            INPUT_VER="${{ github.event.inputs.version }}"
+            if [ -n "$INPUT_VER" ]; then
+              VERSION="${INPUT_VER#v}"
+              TAG="v${VERSION}"
+            else
+              git fetch --tags
+              LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
+              if [ -z "$LATEST_TAG" ]; then
+                LATEST_TAG="v1.0.0"
+              fi
+              CLEAN="${LATEST_TAG#v}"
+              IFS="." read -r MAJOR MINOR PATCH <<< "$CLEAN"
+              MAJOR=${MAJOR:-1}
+              MINOR=${MINOR:-0}
+              PATCH=${PATCH:-0}
+
+              BUMP="${{ github.event.inputs.bump }}"
+              if [ "$BUMP" = "major" ]; then
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+              elif [ "$BUMP" = "minor" ]; then
+                MINOR=$((MINOR + 1))
+                PATCH=0
+              else
+                PATCH=$((PATCH + 1))
+              fi
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              TAG="v${VERSION}"
+            fi
+
+            # Prevent duplicate releases
+            if git rev-parse "$TAG" >/dev/null 2>&1; then
+              echo "::error::Tag $TAG already exists in git history. Aborting release."
+              exit 1
+            fi
+          fi
+
+          echo "Target Version: $VERSION"
+          echo "Target Tag:     $TAG"
+          echo "Is Tag Push:    $IS_TAG_PUSH"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "is_tag_push=${IS_TAG_PUSH}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Source & Configurations
+        run: |
+          swift build -c release
+          plutil -lint com.routun.routund.plist
+          python3 -m json.tool config/routun.json > /dev/null
+          python3 -m json.tool config/singbox.json > /dev/null
+          ruby -c Formula/routun.rb
+
+      - name: Build Universal macOS Binary
+        run: |
+          VERSION="${{ steps.prep.outputs.version }}"
+          echo "Building universal Mach-O binary for v${VERSION}..."
+          swiftc -O -target arm64-apple-macos14.0 Sources/*.swift -o routun-arm64
+          swiftc -O -target x86_64-apple-macos14.0 Sources/*.swift -o routun-x86_64
+          lipo -create -output routun routun-arm64 routun-x86_64
+          file routun
+
+          ARTIFACT="routun-v${VERSION}-macos-universal.tar.gz"
+          tar -czf "$ARTIFACT" routun
+          shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
+          echo "Universal artifact created: $ARTIFACT"
+
+      - name: Sync Version in Sources and Tag
+        if: steps.prep.outputs.is_tag_push == 'false'
+        run: |
+          VERSION="${{ steps.prep.outputs.version }}"
+          TAG="${{ steps.prep.outputs.tag }}"
+
+          python3 -c "
+          import os, re
+          v = os.environ['VERSION']
+          with open('Sources/main.swift', 'r') as f:
+              c = f.read()
+          c = re.sub(r'let version = \"[^\"]+\"', f'let version = \"{v}\"', c)
+          with open('Sources/main.swift', 'w') as f:
+              f.write(c)
+          "
+          git add Sources/main.swift
+          git commit -m "chore(release): v${VERSION} [skip ci]" || echo "Version already up to date"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin main
+          git push origin "${TAG}"
+        env:
+          VERSION: ${{ steps.prep.outputs.version }}
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.prep.outputs.tag }}
+          VERSION: ${{ steps.prep.outputs.version }}
+        run: |
+          ARTIFACT="routun-v${VERSION}-macos-universal.tar.gz"
+          echo "Publishing GitHub Release for ${TAG}..."
+          gh release create "${TAG}" \
+            --title "routun ${TAG}" \
+            --generate-notes \
+            "${ARTIFACT}" \
+            "${ARTIFACT}.sha256"
+
+      - name: Download Official Release Archive & Compute SHA-256
+        id: archive
+        env:
+          TAG: ${{ steps.prep.outputs.tag }}
+        run: |
+          ARCHIVE_URL="https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz"
+          echo "Fetching source tarball from $ARCHIVE_URL..."
+
+          for i in {1..12}; do
+            if curl -fsSL "$ARCHIVE_URL" -o "source-${TAG}.tar.gz" && [ -s "source-${TAG}.tar.gz" ]; then
+              break
+            fi
+            echo "Waiting for GitHub archive generation (attempt $i/12)..."
+            sleep 3
+          done
+
+          if [ ! -s "source-${TAG}.tar.gz" ]; then
+            echo "::error::Failed to download source archive from $ARCHIVE_URL"
+            exit 1
+          fi
+
+          SHA256=$(shasum -a 256 "source-${TAG}.tar.gz" | awk '{print $1}')
+          echo "Source Archive SHA-256: $SHA256"
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+
+      - name: Update In-Repository Homebrew Formula
+        env:
+          VERSION: ${{ steps.prep.outputs.version }}
+          SHA256: ${{ steps.archive.outputs.sha256 }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Updating Formula/routun.rb with v${VERSION} and SHA-256..."
+          ruby -e '
+            version = ENV["VERSION"]
+            sha = ENV["SHA256"]
+            repo = ENV["REPO"]
+            content = File.read("Formula/routun.rb")
+            content.gsub!(/url "https:\/\/github\.com\/[^\/]+\/routun\/archive\/refs\/tags\/v[^"]+\.tar\.gz"/, "url \"https://github.com/#{repo}/archive/refs/tags/v#{version}.tar.gz\"")
+            if content =~ /sha256 "[0-9a-fA-F]+"/
+              content.gsub!(/sha256 "[0-9a-fA-F]+"/, "sha256 \"#{sha}\"")
+            else
+              content.sub!(/(url .*\n)/, "\\1  sha256 \"#{sha}\"\n")
+            end
+            File.write("Formula/routun.rb", content)
+          '
+
+          ruby -c Formula/routun.rb
+          git add Formula/routun.rb
+          git commit -m "chore(brew): update routun formula to v${VERSION} [skip ci]" || echo "Formula unchanged"
+          git push origin main
+
+      - name: Sync External Homebrew Tap (Optional)
+        if: env.HAS_TAP_TOKEN == 'true' && env.TAP_REPO != ''
+        env:
+          HAS_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO || secrets.HOMEBREW_TAP_REPO }}
+          VERSION: ${{ steps.prep.outputs.version }}
+        run: |
+          echo "Syncing Formula/routun.rb to external tap repository: ${TAP_REPO}..."
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap-repo
+          mkdir -p tap-repo/Formula
+          cp -f Formula/routun.rb tap-repo/Formula/routun.rb
+          cd tap-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/routun.rb
+          git commit -m "Update routun to v${VERSION}" || echo "No changes to commit in external tap"
+          git push origin HEAD
