@@ -193,11 +193,11 @@ jobs:
             sha = ENV["SHA256"]
             repo = ENV["REPO"]
             content = File.read("Formula/routun.rb")
-            content.gsub!(/url "https:\/\/github\.com\/[^\/]+\/routun\/archive\/refs\/tags\/v[^"]+\.tar\.gz"/, "url \"https://github.com/#{repo}/archive/refs/tags/v#{version}.tar.gz\"")
-            if content =~ /sha256 "[0-9a-fA-F]+"/
-              content.gsub!(/sha256 "[0-9a-fA-F]+"/, "sha256 \"#{sha}\"")
+            content.sub!(/url "https:\/\/github\.com\/[^\/]+\/routun\/archive\/refs\/tags\/v[^"]+\.tar\.gz"/, "url \"https://github.com/#{repo}/archive/refs/tags/v#{version}.tar.gz\"")
+            if content =~ /url "https:\/\/github\.com\/#{Regexp.escape(repo)}\/archive\/refs\/tags\/v#{version}\.tar\.gz"\n\s*sha256 "[0-9a-fA-F]+"/
+              content.sub!(/(url "https:\/\/github\.com\/#{Regexp.escape(repo)}\/archive\/refs\/tags\/v#{version}\.tar\.gz"\n\s*)sha256 "[0-9a-fA-F]+"/, "\\1sha256 \"#{sha}\"")
             else
-              content.sub!(/(url .*\n)/, "\\1  sha256 \"#{sha}\"\n")
+              content.sub!(/sha256 "[0-9a-fA-F]+"/, "sha256 \"#{sha}\"")
             end
             File.write("Formula/routun.rb", content)
           '
