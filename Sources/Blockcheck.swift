@@ -481,8 +481,8 @@ public final class StrategyOptimizer {
             "-s",
             "-o", "/dev/null",
             "-w", "%{http_code} %{time_total}",
-            "--connect-timeout", "1.5",
-            "--max-time", String(format: "%.1f", max(timeout, 2.0)),
+            "--connect-timeout", "2.0",
+            "--max-time", String(format: "%.1f", max(timeout, 3.0)),
             "-A", "Mozilla/5.0 (Macintosh; Apple Mac OS X) routun-blockcheck/2.0"
         ]
 
@@ -597,7 +597,7 @@ public final class StrategyOptimizer {
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: ciadpiPath)
-        proc.arguments = ["-i", "127.0.0.1", "-p", String(port), "-A", "torst,ssl_err"] + profile.args + ["-c", "64"]
+        proc.arguments = ["-i", "127.0.0.1", "-p", String(port), "-A", "torst,ssl_err"] + profile.args + ["-c", "128"]
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice
 
