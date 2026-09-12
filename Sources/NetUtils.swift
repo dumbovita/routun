@@ -101,10 +101,17 @@ public final class NetUtils {
         defer { session.invalidateAndCancel() }
 
         let semaphore = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var completed = false
         var resultSuccess = false
         var resultMessage = ""
 
         let task = session.dataTask(with: request) { _, response, error in
+            lock.lock()
+            guard !completed else {
+                lock.unlock()
+                return
+            }
             if let error = error {
                 resultMessage = error.localizedDescription
                 resultSuccess = false
@@ -115,15 +122,22 @@ public final class NetUtils {
                 resultSuccess = false
                 resultMessage = "No response"
             }
+            completed = true
+            lock.unlock()
             semaphore.signal()
         }
 
         task.resume()
         if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+            lock.lock()
+            completed = true
+            lock.unlock()
             task.cancel()
             return (false, "Connection timed out (\(timeout)s)")
         }
 
+        lock.lock()
+        defer { lock.unlock() }
         return (resultSuccess, resultMessage)
     }
 

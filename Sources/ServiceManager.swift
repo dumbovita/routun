@@ -64,7 +64,7 @@ public final class ServiceManager {
             if let started = json["started_at"] as? String {
                 startedAt = started
             }
-            if supervisorPid != nil {
+            if let supervisorPid, NetUtils.isProcessAlive(pid: supervisorPid) {
                 isRunning = true
             }
         }
@@ -161,14 +161,11 @@ public final class ServiceManager {
         for label in candidateLabels {
             _ = runCommand("/bin/launchctl", ["bootout", "system/\(label)"])
         }
-        if let plist = RoutunConfig.installedPlistPath {
+        for plist in RoutunConfig.candidatePlistPaths {
             _ = runCommand("/bin/launchctl", ["unload", plist])
         }
 
-        // Stop any standalone background processes gracefully
-        _ = runCommand("/usr/bin/killall", ["-TERM", "sing-box"])
-        _ = runCommand("/usr/bin/killall", ["-TERM", "ciadpi"])
-        _ = runCommand("/sbin/ifconfig", ["utun10", "down"])
+        _ = terminateRecordedChildren()
 
         try? FileManager.default.removeItem(atPath: RoutunConfig.pidFile)
 
@@ -182,6 +179,21 @@ public final class ServiceManager {
         }
 
         return (true, "Service stopped via launchd.")
+    }
+
+    @discardableResult
+    public func terminateRecordedChildren() -> Int {
+        let state = getStatus()
+        return [
+            (state.singboxPid, "sing-box"),
+            (state.ciadpiPid, "ciadpi")
+        ].reduce(into: 0) { count, child in
+            guard let pid = child.0, pid > 0 else { return }
+            let (_, executable) = runCommand("/bin/ps", ["-p", String(pid), "-o", "comm="])
+            guard URL(fileURLWithPath: executable).lastPathComponent == child.1 else { return }
+            _ = runCommand("/bin/kill", ["-TERM", String(pid)])
+            count += 1
+        }
     }
 
     public func restart() -> (success: Bool, message: String) {

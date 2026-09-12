@@ -90,10 +90,10 @@ routun logs -f
 
 ### Strategy Optimization (Blockcheck)
 
-`routun` includes an automated strategy detector inspired by Zapret's `blockcheck`. It tests a comprehensive matrix of parameter combinations (pure splits, dual splits, SNI disorders, TLS record segmentation, fake TTL sweeps, and OOB data) against curated global targets and daily use services, cross-referencing contenders across two verification rounds:
+`routun` includes an automated strategy detector inspired by Zapret's `blockcheck`. It tests a comprehensive matrix of parameter combinations (pure splits, dual splits, SNI disorders, TLS record segmentation, fake TTL sweeps, and OOB data) against the complete curated target list. Each target is probed twice in the same evaluation cycle so profile selection uses consistent results without a redundant second full pass:
 
 ```bash
-# Auto-detect optimal strategy across 59 combinations with cross-referencing
+# Auto-detect an optimal strategy across 59 combinations
 routun optimize
 
 # Include custom target domains to verify they are not broken by DPI evasion

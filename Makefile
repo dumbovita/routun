@@ -1,9 +1,9 @@
 SWIFTC = swiftc
 SWIFT_FLAGS = -O
-SOURCES = Sources/Config.swift Sources/Logger.swift Sources/NetUtils.swift Sources/Daemon.swift Sources/ServiceManager.swift Sources/Blockcheck.swift Sources/Commands.swift Sources/main.swift
+SOURCES := $(wildcard Sources/*.swift)
 TARGET = routun
 
-.PHONY: all build install uninstall clean status doctor logs restart
+.PHONY: all build test install uninstall clean status doctor logs restart
 
 all: build
 
@@ -11,6 +11,9 @@ build: $(TARGET)
 
 $(TARGET): $(SOURCES)
 	$(SWIFTC) $(SWIFT_FLAGS) $(SOURCES) -o $(TARGET)
+
+test:
+	swift test
 
 install: build
 	@sudo ./install.sh

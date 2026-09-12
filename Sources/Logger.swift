@@ -33,7 +33,8 @@ public final class RoutunLogger {
         let timeStr = String(cString: buffer)
 
         let line = "[\(timeStr)] [\(level)] \(message)\n"
-        fputs(line, stderr)
-        fflush(stderr)
+        let stream = level == "ERROR" ? stderr : stdout
+        fputs(line, stream)
+        fflush(stream)
     }
 }

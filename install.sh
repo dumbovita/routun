@@ -78,13 +78,23 @@ swiftc -O Sources/*.swift -o routun
 chmod 755 routun
 
 # 3. Stop old unmanaged processes and any existing service
-echo "[3/7] Stopping any existing routun or unmanaged DPI processes..."
-for srv in "com.routun.routund" "com.routun.daemon"; do
-    if launchctl print "system/$srv" >/dev/null 2>&1; then
-        launchctl bootout "system/$srv" 2>/dev/null || true
-    fi
+echo "[3/7] Stopping and cleaning up any existing routun services..."
+for srv in "com.routun.routund" "com.routun.daemon" "sh.brew.routun" "homebrew.mxcl.routun"; do
+    launchctl bootout "system/$srv" 2>/dev/null || true
+    for uid in $(dscl . -list /Users UniqueID 2>/dev/null | awk '$2 >= 500 {print $2}'); do
+        launchctl bootout "gui/$uid/$srv" 2>/dev/null || true
+    done
 done
 rm -f "/Library/LaunchDaemons/com.routun.daemon.plist"
+rm -f "/Library/LaunchDaemons/sh.brew.routun.plist"
+rm -f "/Library/LaunchDaemons/homebrew.mxcl.routun.plist"
+for user_dir in /Users/*; do
+    if [ -d "$user_dir/Library/LaunchAgents" ]; then
+        rm -f "$user_dir/Library/LaunchAgents/sh.brew.routun.plist"
+        rm -f "$user_dir/Library/LaunchAgents/homebrew.mxcl.routun.plist"
+        rm -f "$user_dir/Library/LaunchAgents/com.routun."*
+    fi
+done
 sleep 1
 
 # Clean up standalone background processes gracefully

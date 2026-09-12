@@ -14,51 +14,51 @@ echo "============================================================"
 echo " routun - Uninstalling routun Service"
 echo "============================================================"
 
-# 1. Stop and remove launchd service
-echo "[1/4] Stopping launchd service..."
-for srv in "sh.brew.routun" "homebrew.mxcl.routun" "com.routun.routund" "com.routun.daemon"; do
-    if launchctl print "system/$srv" >/dev/null 2>&1; then
-        launchctl bootout "system/$srv" 2>/dev/null || true
-    fi
+# 1. Stop and remove launchd services across system and user domains
+echo "[1/3] Stopping and unregistering all launchd services..."
+ALL_SERVICES=("com.routun.routund" "com.routun.daemon" "sh.brew.routun" "homebrew.mxcl.routun")
+
+for srv in "${ALL_SERVICES[@]}"; do
+    launchctl bootout "system/$srv" 2>/dev/null || true
+    for uid in $(dscl . -list /Users UniqueID 2>/dev/null | awk '$2 >= 500 {print $2}'); do
+        launchctl bootout "gui/$uid/$srv" 2>/dev/null || true
+    done
 done
-for plist in "/Library/LaunchDaemons/sh.brew.routun.plist" "/Library/LaunchDaemons/homebrew.mxcl.routun.plist" "/Library/LaunchDaemons/com.routun.routund.plist" "/Library/LaunchDaemons/com.routun.daemon.plist"; do
+
+ALL_PLISTS=(
+    "/Library/LaunchDaemons/com.routun.routund.plist"
+    "/Library/LaunchDaemons/com.routun.daemon.plist"
+    "/Library/LaunchDaemons/sh.brew.routun.plist"
+    "/Library/LaunchDaemons/homebrew.mxcl.routun.plist"
+)
+
+for plist in "${ALL_PLISTS[@]}"; do
     launchctl unload "$plist" 2>/dev/null || true
+    rm -f "$plist"
+done
+
+# Remove any user-level LaunchAgents
+for user_dir in /Users/*; do
+    if [ -d "$user_dir/Library/LaunchAgents" ]; then
+        rm -f "$user_dir/Library/LaunchAgents/sh.brew.routun.plist"
+        rm -f "$user_dir/Library/LaunchAgents/homebrew.mxcl.routun.plist"
+        rm -f "$user_dir/Library/LaunchAgents/com.routun."*
+    fi
 done
 sleep 1
 
 # 2. Terminate residual child processes if any
-echo "[2/4] Ensuring all background processes are stopped..."
-killall -9 sing-box 2>/dev/null || true
-killall -9 ciadpi 2>/dev/null || true
-killall -9 routun 2>/dev/null || true
-sleep 1
+killall -TERM sing-box 2>/dev/null || true
+killall -TERM ciadpi 2>/dev/null || true
 
-# 3. Remove LaunchDaemon and configuration files
-echo "[3/4] Removing service files, configurations, and logs..."
-rm -f "/Library/LaunchDaemons/sh.brew.routun.plist"
-rm -f "/Library/LaunchDaemons/homebrew.mxcl.routun.plist"
-rm -f "/Library/LaunchDaemons/com.routun.routund.plist"
-rm -f "/Library/LaunchDaemons/com.routun.daemon.plist"
+# 3. Remove service files, configurations, and logs
+echo "[2/2] Removing service files, configurations, and logs..."
 rm -rf "/Library/Application Support/routun"
-rm -rf "/opt/homebrew/etc/routun"
-rm -rf "/opt/homebrew/var/log/routun"
-rm -f "/opt/homebrew/var/run/routun.pid"
 rm -rf "/var/log/routun"
 rm -f "/var/run/routun.pid"
 rm -f "/usr/local/bin/routun"
-rm -f "/usr/local/bin/ciadpi"
-rm -rf "/opt/homebrew/Cellar/routun"
-rm -rf "/opt/homebrew/opt/routun"
-
-# 4. Verify network interfaces
-echo "[4/4] Verifying network interface restoration..."
-if ifconfig utun10 >/dev/null 2>&1; then
-    echo "  Notice: utun10 is still present; releasing..."
-    ifconfig utun10 down 2>/dev/null || true
-fi
 
 echo "============================================================"
-echo " routun has been completely uninstalled."
-echo " All system files, launchd entries, and logs have been removed."
+echo " routun service and files have been removed."
 echo " Network routing is in its native macOS state."
 echo "============================================================"

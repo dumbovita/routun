@@ -69,39 +69,9 @@ public final class RoutunDaemon {
     }
 
     private func cleanupStaleProcesses() {
-        let myPid = ProcessInfo.processInfo.processIdentifier
-        var pidsToClean = [pid_t]()
-
-        for name in ["ciadpi", "sing-box"] {
-            let (code, out) = ServiceManager.shared.runCommand("/usr/bin/pgrep", ["-x", name])
-            if code == 0 && !out.isEmpty {
-                for line in out.components(separatedBy: .newlines) {
-                    if let pid = pid_t(line.trimmingCharacters(in: .whitespaces)), pid != myPid {
-                        pidsToClean.append(pid)
-                    }
-                }
-            }
-        }
-
-        if !pidsToClean.isEmpty {
-            logger.warn("Cleaning up \(pidsToClean.count) lingering unmanaged process(es) before startup...")
-            for pid in pidsToClean {
-                kill(pid, SIGTERM)
-            }
-
-            for _ in 0..<15 {
-                let alive = pidsToClean.filter { kill($0, 0) == 0 }
-                if alive.isEmpty { break }
-                usleep(100_000) // 100ms
-            }
-
-            for pid in pidsToClean {
-                if kill(pid, 0) == 0 {
-                    kill(pid, SIGKILL)
-                }
-            }
-
-            // Allow kernel virtual interfaces and sockets to release
+        let terminated = ServiceManager.shared.terminateRecordedChildren()
+        if terminated > 0 {
+            logger.warn("Stopped \(terminated) child process(es) recorded by the previous routun service.")
             usleep(300_000)
         }
     }

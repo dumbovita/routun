@@ -13,6 +13,11 @@ let package = Package(
         .executableTarget(
             name: "routun",
             path: "Sources"
+        ),
+        .testTarget(
+            name: "routunTests",
+            dependencies: ["routun"],
+            path: "Tests/routunTests"
         )
     ]
 )

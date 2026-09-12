@@ -96,15 +96,16 @@ public struct RoutunConfig: Codable {
             || FileManager.default.fileExists(atPath: "/Library/LaunchDaemons/homebrew.mxcl.routun.plist")
     }
 
+    public static let candidatePlistPaths = [
+        "/Library/LaunchDaemons/sh.brew.routun.plist",
+        "/Library/LaunchDaemons/homebrew.mxcl.routun.plist",
+        "/Library/LaunchDaemons/com.routun.routund.plist",
+        "/Library/LaunchDaemons/com.routun.daemon.plist"
+    ]
+
     public static var installedPlistPath: String? {
         let fm = FileManager.default
-        let candidates = [
-            "/Library/LaunchDaemons/sh.brew.routun.plist",
-            "/Library/LaunchDaemons/homebrew.mxcl.routun.plist",
-            "/Library/LaunchDaemons/com.routun.routund.plist",
-            "/Library/LaunchDaemons/com.routun.daemon.plist"
-        ]
-        for path in candidates {
+        for path in candidatePlistPaths {
             if fm.fileExists(atPath: path) { return path }
         }
         return nil

@@ -282,15 +282,27 @@ public final class RoutunCommands {
         guard ensureRoot() else { return }
         print("\(cyan)Stopping and removing routun service...\(reset)")
         _ = ServiceManager.shared.stop()
-        _ = ServiceManager.shared.runCommand("/usr/bin/killall", ["sing-box"])
-        _ = ServiceManager.shared.runCommand("/usr/bin/killall", ["ciadpi"])
-        try? FileManager.default.removeItem(atPath: RoutunConfig.launchDaemonPlist)
-        try? FileManager.default.removeItem(atPath: "/Library/LaunchDaemons/com.routun.daemon.plist")
+        for plist in RoutunConfig.candidatePlistPaths {
+            try? FileManager.default.removeItem(atPath: plist)
+        }
+
+        // Clean user-level LaunchAgents
+        if let userDirs = try? FileManager.default.contentsOfDirectory(atPath: "/Users") {
+            for user in userDirs {
+                let agentDir = "/Users/\(user)/Library/LaunchAgents"
+                try? FileManager.default.removeItem(atPath: "\(agentDir)/sh.brew.routun.plist")
+                try? FileManager.default.removeItem(atPath: "\(agentDir)/homebrew.mxcl.routun.plist")
+                try? FileManager.default.removeItem(atPath: "\(agentDir)/com.routun.routund.plist")
+                try? FileManager.default.removeItem(atPath: "\(agentDir)/com.routun.daemon.plist")
+            }
+        }
+
         try? FileManager.default.removeItem(atPath: RoutunConfig.appSupportDir)
         try? FileManager.default.removeItem(atPath: RoutunConfig.logDir)
         try? FileManager.default.removeItem(atPath: RoutunConfig.pidFile)
         _ = ServiceManager.shared.runCommand("/sbin/ifconfig", ["utun10", "down"])
         try? FileManager.default.removeItem(atPath: RoutunConfig.installedBinaryPath)
+        try? FileManager.default.removeItem(atPath: "/usr/local/bin/routun")
         print("\(green)routun has been completely uninstalled from this system.\(reset)")
     }
 

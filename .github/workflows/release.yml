@@ -97,9 +97,25 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "is_tag_push=${IS_TAG_PUSH}" >> "$GITHUB_OUTPUT"
 
+      - name: Set Source Version
+        if: steps.prep.outputs.is_tag_push == 'false'
+        env:
+          VERSION: ${{ steps.prep.outputs.version }}
+        run: |
+          python3 -c "
+          import os, re
+          v = os.environ['VERSION']
+          with open('Sources/main.swift', 'r') as f:
+              c = f.read()
+          c = re.sub(r'let version = \"[^\"]+\"', f'let version = \"{v}\"', c)
+          with open('Sources/main.swift', 'w') as f:
+              f.write(c)
+          "
+
       - name: Validate Source & Configurations
         run: |
           swift build -c release
+          swift test -c release
           plutil -lint com.routun.routund.plist
           python3 -m json.tool config/routun.json > /dev/null
           python3 -m json.tool config/singbox.json > /dev/null
@@ -125,22 +141,11 @@ jobs:
           VERSION="${{ steps.prep.outputs.version }}"
           TAG="${{ steps.prep.outputs.tag }}"
 
-          python3 -c "
-          import os, re
-          v = os.environ['VERSION']
-          with open('Sources/main.swift', 'r') as f:
-              c = f.read()
-          c = re.sub(r'let version = \"[^\"]+\"', f'let version = \"{v}\"', c)
-          with open('Sources/main.swift', 'w') as f:
-              f.write(c)
-          "
           git add Sources/main.swift
           git commit -m "chore(release): v${VERSION} [skip ci]" || echo "Version already up to date"
           git tag -a "${TAG}" -m "Release ${TAG}"
           git push origin HEAD:main
           git push origin "${TAG}"
-        env:
-          VERSION: ${{ steps.prep.outputs.version }}
 
       - name: Create or Update GitHub Release
         env:

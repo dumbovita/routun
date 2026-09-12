@@ -9,19 +9,22 @@ public struct StrategyTarget: Hashable {
     public let host: String
     public let port: Int
     public let path: String
+    public let scheme: String
     public let isReference: Bool
 
-    public init(name: String, host: String, port: Int = 443, path: String = "/", isReference: Bool = false) {
+    public init(name: String, host: String, port: Int = 443, path: String = "/", scheme: String? = nil, isReference: Bool = false) {
         self.name = name
         self.host = host
         self.port = port
         self.path = path
+        self.scheme = scheme ?? (port == 80 ? "http" : "https")
         self.isReference = isReference
     }
 
     public var urlString: String {
-        let scheme = (port == 443) ? "https" : "http"
-        return "\(scheme)://\(host)\(path)"
+        let defaultPort = scheme == "http" ? 80 : 443
+        let portSuffix = port == defaultPort ? "" : ":\(port)"
+        return "\(scheme)://\(host)\(portSuffix)\(path)"
     }
 
     /// Parse a user-provided target string (e.g. "*.anadolu.edu.tr", "saglik.gov.tr", "https://discord.com")
@@ -50,14 +53,21 @@ public struct StrategyTarget: Hashable {
         let cleanHost = rawHost.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
         guard !cleanHost.isEmpty else { return nil }
 
-        let port = components.port ?? (components.scheme == "http" ? 80 : 443)
-        let path = components.path.isEmpty ? "/" : components.path
+        let scheme = (components.scheme ?? "https").lowercased()
+        guard scheme == "http" || scheme == "https" else { return nil }
+
+        let port = components.port ?? (scheme == "http" ? 80 : 443)
+        guard (1...65535).contains(port) else { return nil }
+
+        let path = components.percentEncodedPath.isEmpty ? "/" : components.percentEncodedPath
+        let pathWithQuery = components.percentEncodedQuery.map { "\(path)?\($0)" } ?? path
 
         return StrategyTarget(
             name: cleanHost,
             host: cleanHost,
             port: port,
-            path: path,
+            path: pathWithQuery,
+            scheme: scheme,
             isReference: false
         )
     }
@@ -67,10 +77,10 @@ public struct StrategyTarget: Hashable {
         var targets = [StrategyTarget]()
         var seen = Set<String>()
         for raw in rawList {
-            let splitParts = raw.components(separatedBy: ",")
+            let splitParts = raw.split { $0 == "," || $0.isWhitespace }
             for part in splitParts {
-                if let target = parse(from: part), !seen.contains(target.host) {
-                    seen.insert(target.host)
+                if let target = parse(from: String(part)), !seen.contains(target.urlString) {
+                    seen.insert(target.urlString)
                     targets.append(target)
                 }
             }
@@ -325,6 +335,11 @@ public struct ProbeResult {
     public let exitCode: Int32
     public let detail: String
     public let attempts: Int
+    public let successfulAttempts: Int
+
+    public var isReliable: Bool {
+        successfulAttempts == attempts
+    }
 }
 
 public struct Phase1Score {
@@ -336,19 +351,6 @@ public struct Phase1Score {
     public let timeouts: Int
     public let customTargetsPassed: Int
     public let totalCustomTargets: Int
-    public let results: [String: ProbeResult]
-}
-
-public struct CrossReferenceScore {
-    public let profile: StrategyProfile
-    public let round1Results: [String: ProbeResult]
-    public let round2Results: [String: ProbeResult]
-    public let stabilityRate: Double // 0.0 to 1.0
-    public let totalPasses: Int
-    public let totalTests: Int
-    public let avgLatencyMs: Int
-    public let unlockedCount: Int
-    public let customPassedCount: Int
 }
 
 // MARK: - Strategy Optimizer (Blockcheck Engine)
@@ -361,6 +363,7 @@ public final class StrategyOptimizer {
     public let customTargets: [StrategyTarget]
 
     private let physicalInterface: String?
+    private let probeOverride: ((StrategyTarget, Int?, Double) -> ProbeResult)?
 
     public static func findFreePort() -> Int {
         var addr = sockaddr_in()
@@ -387,7 +390,14 @@ public final class StrategyOptimizer {
         return port > 1024 ? port : 10885
     }
 
-    public init(ciadpiPath: String? = nil, testPort: Int? = nil, verbose: Bool = false, quick: Bool = false, customTargets: [StrategyTarget] = []) {
+    public init(
+        ciadpiPath: String? = nil,
+        testPort: Int? = nil,
+        verbose: Bool = false,
+        quick: Bool = false,
+        customTargets: [StrategyTarget] = [],
+        probeOverride: ((StrategyTarget, Int?, Double) -> ProbeResult)? = nil
+    ) {
         let config = RoutunConfig.load()
         self.ciadpiPath = ciadpiPath ?? config.ciadpiPath
         self.testPort = testPort ?? StrategyOptimizer.findFreePort()
@@ -395,6 +405,20 @@ public final class StrategyOptimizer {
         self.quick = quick
         self.customTargets = customTargets
         self.physicalInterface = StrategyOptimizer.detectPhysicalInterface()
+        self.probeOverride = probeOverride
+    }
+
+    public static func evaluationTargets(customTargets: [StrategyTarget]) -> [StrategyTarget] {
+        var seenHosts = Set<String>()
+        var targets = [StrategyTarget]()
+
+        for target in customTargets + StrategyTargets.all where !target.isReference {
+            if seenHosts.insert(target.host).inserted {
+                targets.append(target)
+            }
+        }
+
+        return targets
     }
 
     /// Detect active physical network interface (e.g. en0) to bypass utun10 for baseline tests
@@ -417,7 +441,7 @@ public final class StrategyOptimizer {
                 }
             }
         }
-        return "en0"
+        return nil
     }
 
     /// Perform a single HTTP/TLS probe via /usr/bin/curl
@@ -459,7 +483,7 @@ public final class StrategyOptimizer {
             let parts = output.components(separatedBy: " ")
 
             let statusCode = parts.first.flatMap { Int($0) } ?? 0
-            let isReachable = (statusCode > 0 && statusCode < 500)
+            let isReachable = statusCode > 0
 
             var detail = "HTTP \(statusCode)"
             if !isReachable {
@@ -479,7 +503,8 @@ public final class StrategyOptimizer {
                 statusCode: statusCode,
                 exitCode: exitCode,
                 detail: detail,
-                attempts: 1
+                attempts: 1,
+                successfulAttempts: isReachable ? 1 : 0
             )
         } catch {
             return ProbeResult(
@@ -489,50 +514,41 @@ public final class StrategyOptimizer {
                 statusCode: 0,
                 exitCode: -1,
                 detail: error.localizedDescription,
-                attempts: 1
+                attempts: 1,
+                successfulAttempts: 0
             )
         }
     }
 
-    /// Probe a target with automatic retry (tries twice to avoid transient flukes)
-    public func probe(target: StrategyTarget, socksPort: Int?, timeout: Double = 1.8, maxAttempts: Int = 2) -> ProbeResult {
-        let first = probeSingle(target: target, socksPort: socksPort, timeout: timeout)
-        if first.isReachable || maxAttempts <= 1 {
-            return first
+    public func probe(target: StrategyTarget, socksPort: Int?, timeout: Double = 1.8) -> ProbeResult {
+        let runProbe = probeOverride ?? { [self] target, socksPort, timeout in
+            probeSingle(target: target, socksPort: socksPort, timeout: timeout)
         }
-
-        // Retry on failure ("try the same thing twice")
+        let first = runProbe(target, socksPort, timeout)
         usleep(40_000) // 40ms pause before retry
-        let second = probeSingle(target: target, socksPort: socksPort, timeout: timeout)
-        if second.isReachable {
-            return ProbeResult(
-                target: target,
-                isReachable: true,
-                latencyMs: second.latencyMs,
-                statusCode: second.statusCode,
-                exitCode: second.exitCode,
-                detail: "\(second.detail) (retry ✓)",
-                attempts: 2
-            )
-        }
+        let second = runProbe(target, socksPort, timeout)
+        let successfulAttempts = first.successfulAttempts + second.successfulAttempts
+        let selected = second.isReachable ? second : first.isReachable ? first : second
+        let detail = successfulAttempts == 1 ? "\(selected.detail) (inconsistent: 1/2)" : selected.detail
+
         return ProbeResult(
-            target: target,
-            isReachable: false,
-            latencyMs: second.latencyMs,
-            statusCode: second.statusCode,
-            exitCode: second.exitCode,
-            detail: second.detail,
-            attempts: 2
+            target: selected.target,
+            isReachable: successfulAttempts > 0,
+            latencyMs: selected.latencyMs,
+            statusCode: selected.statusCode,
+            exitCode: selected.exitCode,
+            detail: detail,
+            attempts: 2,
+            successfulAttempts: successfulAttempts
         )
     }
 
-    /// Concurrently probe multiple targets against socksPort in parallel
-    public func probeConcurrently(targets: [StrategyTarget], socksPort: Int?, timeout: Double = 1.8, maxAttempts: Int = 2) -> [ProbeResult] {
+    public func probeConcurrently(targets: [StrategyTarget], socksPort: Int?, timeout: Double = 1.8) -> [ProbeResult] {
         var results = [ProbeResult?](repeating: nil, count: targets.count)
         let lock = NSLock()
 
         DispatchQueue.concurrentPerform(iterations: targets.count) { i in
-            let res = self.probe(target: targets[i], socksPort: socksPort, timeout: timeout, maxAttempts: maxAttempts)
+            let res = self.probe(target: targets[i], socksPort: socksPort, timeout: timeout)
             lock.lock()
             results[i] = res
             lock.unlock()
@@ -596,7 +612,7 @@ public final class StrategyOptimizer {
         }
     }
 
-    /// Run the comprehensive strategy optimization and cross-referencing routine
+    /// Run the comprehensive strategy optimization routine.
     public func run(onProgress: ((String) -> Void)? = nil) -> StrategyProfile? {
         let emit = { (msg: String) in
             if let cb = onProgress {
@@ -611,7 +627,7 @@ public final class StrategyOptimizer {
 
         // 1. Sanity check: Global internet connectivity
         let refTarget = StrategyTargets.all.first { $0.isReference } ?? StrategyTargets.all[0]
-        let refResult = probe(target: refTarget, socksPort: nil, timeout: 2.5, maxAttempts: 2)
+        let refResult = probe(target: refTarget, socksPort: nil, timeout: 2.5)
         if !refResult.isReachable && refResult.exitCode == 6 {
             emit("\u{001B}[31mError:\u{001B}[0m No internet connection or DNS resolution failure detected.")
             emit("Please verify your internet connection before running strategy optimization.")
@@ -619,22 +635,7 @@ public final class StrategyOptimizer {
         }
 
         // 2. Establish Baseline (Direct physical connection without ByeDPI)
-        var seenHosts = Set<String>()
-        var evalTargets = [StrategyTarget]()
-
-        // Custom targets are prioritized at the top of the evaluation list
-        for ct in customTargets {
-            if !seenHosts.contains(ct.host) {
-                seenHosts.insert(ct.host)
-                evalTargets.append(ct)
-            }
-        }
-        for st in StrategyTargets.all where !st.isReference {
-            if !seenHosts.contains(st.host) {
-                seenHosts.insert(st.host)
-                evalTargets.append(st)
-            }
-        }
+        let evalTargets = StrategyOptimizer.evaluationTargets(customTargets: customTargets)
 
         if !customTargets.isEmpty {
             emit("Custom targets added (\(customTargets.count)): \(customTargets.map { $0.host }.joined(separator: ", "))\n")
@@ -643,8 +644,7 @@ public final class StrategyOptimizer {
         var baselineResults = [String: ProbeResult]()
         var baselineReachableCount = 0
 
-        // Concurrently probe baseline targets
-        let directProbes = probeConcurrently(targets: evalTargets, socksPort: nil, timeout: 2.0, maxAttempts: 2)
+        let directProbes = probeConcurrently(targets: evalTargets, socksPort: nil, timeout: 2.0)
         for res in directProbes {
             baselineResults[res.target.host] = res
             if res.isReachable {
@@ -661,21 +661,13 @@ public final class StrategyOptimizer {
         let blockedTargets = evalTargets.filter { !(baselineResults[$0.host]?.isReachable ?? false) }
         emit("Baseline (Direct): \(baselineReachableCount)/\(evalTargets.count) reachable (\(blockedTargets.count) blocked by DPI)\n")
 
-        // targetsToTest includes all blocked targets, PLUS customTargets (to ensure desync does not break them!)
-        var targetsToTest = blockedTargets
-        for ct in customTargets {
-            if !targetsToTest.contains(where: { $0.host == ct.host }) {
-                targetsToTest.append(ct)
-            }
-        }
-
-        if targetsToTest.isEmpty {
+        if blockedTargets.isEmpty {
             emit("\u{001B}[32mAll test targets are directly accessible on your current network without DPI bypass.\u{001B}[0m")
             emit("Keeping default profile: \u{001B}[1m\(StrategyProfiles.defaultProfile.name)\u{001B}[0m\n")
             return StrategyProfiles.defaultProfile
         }
 
-        // 3. Stage 1: Fast Matrix Combination Evaluation
+        // 3. Single profile-evaluation cycle across the complete target list
         let candidateProfiles = quick ? StrategyProfiles.canonical : StrategyProfiles.all
         let modeLabel = quick ? "canonical profiles" : "comprehensive combinations matrix"
         emit("Testing \(candidateProfiles.count) \(modeLabel):")
@@ -694,9 +686,7 @@ public final class StrategyOptimizer {
                 terminateProcess(testProc)
             }
 
-            // Concurrently test targets with automatic retry
-            let probeResults = probeConcurrently(targets: targetsToTest, socksPort: testPort, timeout: 1.8, maxAttempts: 2)
-            var resultMap = [String: ProbeResult]()
+            let probeResults = probeConcurrently(targets: evalTargets, socksPort: testPort, timeout: 1.8)
             var unlockedCount = 0
             var customPassed = 0
             var totalReachable = 0
@@ -704,8 +694,7 @@ public final class StrategyOptimizer {
             var timeouts = 0
 
             for res in probeResults {
-                resultMap[res.target.host] = res
-                if res.isReachable {
+                if res.isReliable {
                     totalReachable += 1
                     totalLatency += res.latencyMs
                     if blockedSet.contains(res.target.host) {
@@ -714,7 +703,7 @@ public final class StrategyOptimizer {
                     if customSet.contains(res.target.host) {
                         customPassed += 1
                     }
-                } else if res.exitCode == 28 {
+                } else if !res.isReachable && res.exitCode == 28 {
                     timeouts += 1
                 }
             }
@@ -732,12 +721,11 @@ public final class StrategyOptimizer {
                 profile: profile,
                 unlockedCount: unlockedCount,
                 reachableCount: totalReachable,
-                totalTargets: targetsToTest.count,
+                totalTargets: evalTargets.count,
                 averageLatencyMs: avgLatency,
                 timeouts: timeouts,
                 customTargetsPassed: customPassed,
-                totalCustomTargets: customTargets.count,
-                results: resultMap
+                totalCustomTargets: customTargets.count
             )
             phase1Scores.append(p1Score)
 
@@ -753,8 +741,8 @@ public final class StrategyOptimizer {
             }
             let detailStr = statusDetails.isEmpty ? "" : " (\(statusDetails.joined(separator: ", ")))"
             let statusSuffix = (totalReachable > 0)
-                ? "\(totalReachable)/\(targetsToTest.count) reachable\(detailStr) (\(avgLatency)ms)"
-                : "\u{001B}[31m0/\(targetsToTest.count) reachable (blocked)\u{001B}[0m"
+                ? "\(totalReachable)/\(evalTargets.count) reliably reachable\(detailStr) (\(avgLatency)ms)"
+                : "\u{001B}[31m0/\(evalTargets.count) reliably reachable\u{001B}[0m"
             let idxPadded = String(format: "%2d", index + 1)
             emit("  [\(idxPadded)/\(candidateProfiles.count)] \(paddedId) \(statusSuffix)")
         }
@@ -777,7 +765,10 @@ public final class StrategyOptimizer {
                 if a.timeouts != b.timeouts {
                     return a.timeouts < b.timeouts
                 }
-                return a.averageLatencyMs < b.averageLatencyMs
+                if a.averageLatencyMs != b.averageLatencyMs {
+                    return a.averageLatencyMs < b.averageLatencyMs
+                }
+                return a.profile.complexity < b.profile.complexity
             }
 
         if workingContenders.isEmpty {
@@ -786,199 +777,16 @@ public final class StrategyOptimizer {
             return StrategyProfiles.defaultProfile
         }
 
-        // 4. Stage 2: Cross-Referencing & Multi-Round Stability Verification
-        let topContenders = Array(workingContenders.prefix(4).map { $0.profile })
-        
-        let sampleReachable = Array(evalTargets.filter {
-            !blockedSet.contains($0.host) && !customSet.contains($0.host) && (baselineResults[$0.host]?.isReachable ?? false)
-        }.prefix(3))
-        let crossTargets = targetsToTest + sampleReachable
-
-        emit("\n\u{001B}[1mCross-Referencing Top Contenders (2-Round Stability Verification)...\u{001B}[0m")
-
-        var crossScores = [CrossReferenceScore]()
-
-        for contender in topContenders {
-            guard let testProc = spawnTestCiadpi(profile: contender, port: testPort) else { continue }
-            defer { terminateProcess(testProc) }
-
-            // Round 1
-            let round1Probes = probeConcurrently(targets: crossTargets, socksPort: testPort, timeout: 1.8, maxAttempts: 1)
-            var r1Map = [String: ProbeResult]()
-            for p in round1Probes { r1Map[p.target.host] = p }
-
-            usleep(80_000)
-
-            // Round 2
-            let round2Probes = probeConcurrently(targets: crossTargets, socksPort: testPort, timeout: 1.8, maxAttempts: 1)
-            var r2Map = [String: ProbeResult]()
-            for p in round2Probes { r2Map[p.target.host] = p }
-
-            var passes = 0
-            var totalLatency = 0
-            var latCount = 0
-            var unblockedInBoth = 0
-            var customPassedBoth = 0
-
-            for target in blockedTargets {
-                let p1 = r1Map[target.host]?.isReachable ?? false
-                let p2 = r2Map[target.host]?.isReachable ?? false
-                if p1 && p2 {
-                    unblockedInBoth += 1
-                }
-            }
-
-            for target in customTargets {
-                let p1 = r1Map[target.host]?.isReachable ?? false
-                let p2 = r2Map[target.host]?.isReachable ?? false
-                if p1 && p2 {
-                    customPassedBoth += 1
-                }
-            }
-
-            for target in crossTargets {
-                if let r1 = r1Map[target.host], r1.isReachable {
-                    passes += 1
-                    totalLatency += r1.latencyMs
-                    latCount += 1
-                }
-                if let r2 = r2Map[target.host], r2.isReachable {
-                    passes += 1
-                    totalLatency += r2.latencyMs
-                    latCount += 1
-                }
-            }
-
-            let totalTests = crossTargets.count * 2
-            let stability = Double(passes) / Double(totalTests)
-            let avgLat = latCount > 0 ? (totalLatency / latCount) : 9999
-
-            crossScores.append(CrossReferenceScore(
-                profile: contender,
-                round1Results: r1Map,
-                round2Results: r2Map,
-                stabilityRate: stability,
-                totalPasses: passes,
-                totalTests: totalTests,
-                avgLatencyMs: avgLat,
-                unlockedCount: unblockedInBoth,
-                customPassedCount: customPassedBoth
-            ))
-        }
-
-        printCrossReferenceMatrix(
-            scores: crossScores,
-            targets: crossTargets,
-            blockedTargets: blockedTargets,
-            customTargets: customTargets,
-            emit: emit
-        )
-
-        let ranked = crossScores.sorted { a, b in
-            if a.customPassedCount != b.customPassedCount {
-                return a.customPassedCount > b.customPassedCount
-            }
-            if a.unlockedCount != b.unlockedCount {
-                return a.unlockedCount > b.unlockedCount
-            }
-            if a.stabilityRate != b.stabilityRate {
-                return a.stabilityRate > b.stabilityRate
-            }
-            if abs(a.avgLatencyMs - b.avgLatencyMs) > 35 {
-                return a.avgLatencyMs < b.avgLatencyMs
-            }
-            return a.profile.complexity < b.profile.complexity
-        }
-
-        guard let winner = ranked.first else {
-            emit("\nPreserving default profile: \u{001B}[1m\(StrategyProfiles.defaultProfile.name)\u{001B}[0m\n")
-            return StrategyProfiles.defaultProfile
-        }
+        let winner = workingContenders[0]
 
         emit("\n\u{001B}[32m✓ Selected:\u{001B}[0m \u{001B}[1m\(winner.profile.id)\u{001B}[0m (\(winner.profile.name))")
         emit("  Family:      \(winner.profile.family)")
         emit("  Description: \(winner.profile.description)")
         emit("  Parameters:  \(winner.profile.args.joined(separator: " "))")
-        emit("  Stability:   \(Int(winner.stabilityRate * 100))% (\(winner.totalPasses)/\(winner.totalTests) successful probes)")
-        emit("  Avg Latency: \(winner.avgLatencyMs)ms\n")
+        emit("  Reliability: \(winner.reachableCount)/\(winner.totalTargets) targets passed both probes")
+        emit("  Avg Latency: \(winner.averageLatencyMs)ms\n")
 
         return winner.profile
-    }
-
-    /// Render a side-by-side cross-reference matrix
-    private func printCrossReferenceMatrix(
-        scores: [CrossReferenceScore],
-        targets: [StrategyTarget],
-        blockedTargets: [StrategyTarget],
-        customTargets: [StrategyTarget],
-        emit: (String) -> Void
-    ) {
-        guard !scores.isEmpty else { return }
-
-        let targetColWidth = 24
-        let scoreColWidth = 24
-        let hrLen = targetColWidth + (scoreColWidth * scores.count) + 2
-        let hr = String(repeating: "-", count: hrLen)
-
-        emit(hr)
-        var header = "Target".padding(toLength: targetColWidth, withPad: " ", startingAt: 0)
-        for s in scores {
-            let colName = s.profile.id.prefix(scoreColWidth - 2)
-            header += "  " + String(colName).padding(toLength: scoreColWidth - 2, withPad: " ", startingAt: 0)
-        }
-        emit("\u{001B}[1m\(header)\u{001B}[0m")
-        emit(hr)
-
-        let blockedSet = Set(blockedTargets.map { $0.host })
-        let customSet = Set(customTargets.map { $0.host })
-
-        for target in targets {
-            let tag: String
-            if customSet.contains(target.host) {
-                tag = "+"
-            } else if blockedSet.contains(target.host) {
-                tag = "*"
-            } else {
-                tag = " "
-            }
-            var row = "\(tag)\(target.host)".padding(toLength: targetColWidth, withPad: " ", startingAt: 0)
-
-            for s in scores {
-                let r1 = s.round1Results[target.host]
-                let r2 = s.round2Results[target.host]
-                let p1 = r1?.isReachable ?? false
-                let p2 = r2?.isReachable ?? false
-
-                let m1 = p1 ? "\u{001B}[32m✓\u{001B}[0m" : "\u{001B}[31m✗\u{001B}[0m"
-                let m2 = p2 ? "\u{001B}[32m✓\u{001B}[0m" : "\u{001B}[31m✗\u{001B}[0m"
-                let lat = p1 ? (r1?.latencyMs ?? 0) : (r2?.latencyMs ?? 0)
-                let latStr = lat > 0 ? "\(lat)ms" : "fail"
-
-                let colContent = "\(m1)\(m2) \(latStr)"
-                // Account for ANSI escape codes when padding
-                let visualLen = 3 + latStr.count // 2 symbols + 1 space + latStr
-                let padNeeded = max(0, (scoreColWidth - 2) - visualLen)
-                row += "  " + colContent + String(repeating: " ", count: padNeeded)
-            }
-            emit(row)
-        }
-
-        emit(hr)
-        var stabRow = "Stability:".padding(toLength: targetColWidth, withPad: " ", startingAt: 0)
-        for s in scores {
-            let pct = "\(Int(s.stabilityRate * 100))% (\(s.totalPasses)/\(s.totalTests))"
-            stabRow += "  " + pct.padding(toLength: scoreColWidth - 2, withPad: " ", startingAt: 0)
-        }
-        emit("\u{001B}[1m\(stabRow)\u{001B}[0m")
-
-        var latRow = "Avg Latency:".padding(toLength: targetColWidth, withPad: " ", startingAt: 0)
-        for s in scores {
-            let latStr = "\(s.avgLatencyMs)ms"
-            latRow += "  " + latStr.padding(toLength: scoreColWidth - 2, withPad: " ", startingAt: 0)
-        }
-        emit("\u{001B}[1m\(latRow)\u{001B}[0m")
-        emit(hr)
-        emit("(* = blocked on baseline network, + = custom target, ✓✓ = verified across both test rounds)")
     }
 
     /// Save the selected profile to routun.json
