@@ -13,6 +13,5 @@
   ],
   "socks_host": "127.0.0.1",
   "socks_port": 1080,
-  "tun_interface": "utun10",
   "singbox_config": ""
 }

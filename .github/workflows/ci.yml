@@ -29,6 +29,8 @@ jobs:
           swiftc -O -target arm64-apple-macos14.0 Sources/*.swift -o routun-arm64
           swiftc -O -target x86_64-apple-macos14.0 Sources/*.swift -o routun-x86_64
           lipo -create -output routun-universal routun-arm64 routun-x86_64
+          lipo routun-universal -verify_arch arm64
+          lipo routun-universal -verify_arch x86_64
           file routun-universal
           rm -f routun-arm64 routun-x86_64 routun-universal
 
@@ -41,9 +43,8 @@ jobs:
           ./routun --help
           ./routun doctor
 
-      - name: Validate Configurations & Plists
+      - name: Validate Configurations
         run: |
-          plutil -lint com.routun.routund.plist
           python3 -m json.tool config/routun.json > /dev/null
           python3 -m json.tool config/singbox.json > /dev/null
 

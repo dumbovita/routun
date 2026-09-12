@@ -1,12 +1,12 @@
 class Routun < Formula
   desc "Transparent TUN-based network routing for macOS"
   homepage "https://github.com/dumbovita/routun"
-  url "https://github.com/dumbovita/routun/archive/refs/tags/v1.2.7.tar.gz"
+  url "https://github.com/dumbovita/routun/archive/refs/tags/v1.3.0.tar.gz"
   sha256 "05a6f38993a91ce7aae7ef579c30b633ced2b101d30003513e1a3ae5ebc7eb25"
   license "MIT"
   head "https://github.com/dumbovita/routun.git", branch: "main"
 
-  depends_on :macos
+  depends_on macos: :sonoma
   depends_on "sing-box"
   uses_from_macos "swift" => :build
 
@@ -23,35 +23,21 @@ class Routun < Formula
     end
 
     # Build and install routun
-    system "swiftc", "-O", *Dir["Sources/*.swift"], "-o", "routun"
+    architecture = Hardware::CPU.arm? ? "arm64" : "x86_64"
+    system "swiftc", "-O", "-target", "#{architecture}-apple-macos14.0", *Dir["Sources/*.swift"], "-o", "routun"
     bin.install "routun"
 
-    # Install configuration files into etc/routun (preserved on upgrades)
-    (etc/"routun").install "config/singbox.json", "config/routun.json"
-
-    # Ensure log and runtime directories exist under HOMEBREW_PREFIX/var
-    (var/"log/routun").mkpath
-    (var/"run").mkpath
-  end
-
-  post_install_steps do
-    mkdir_p "log/routun", base: :var
-    mkdir_p "run", base: :var
-  end
-
-  service do
-    run [opt_bin/"routun", "daemon"]
-    require_root true
-    keep_alive successful_exit: false
-    log_path var/"log/routun/daemon.log"
-    error_log_path var/"log/routun/daemon.err"
-    working_dir var
+    pkgshare.install "config/singbox.json", "config/routun.json"
   end
 
   def caveats
     <<~EOS
-      routun requires root privileges to manage virtual TUN interfaces:
-        sudo brew services start routun
+      routun uses its own system LaunchDaemon so Homebrew remains a
+      distribution and upgrade mechanism only. After installation, run:
+        sudo routun install
+
+      After every brew upgrade, run the same command to copy the new,
+      root-owned service payload and restart the existing LaunchDaemon.
 
       To verify operation:
         routun status

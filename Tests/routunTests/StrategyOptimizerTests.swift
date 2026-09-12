@@ -1,4 +1,5 @@
 #if canImport(XCTest)
+import Foundation
 import XCTest
 @testable import routun
 
@@ -82,7 +83,11 @@ final class StrategyOptimizerTests: XCTestCase {
         XCTAssertEqual(result.successfulAttempts, 1)
     }
 
-    func testLiveReferenceTargetIsReachable() {
+    func testLiveReferenceTargetIsReachable() throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["ROUTUN_LIVE_NETWORK_TESTS"] == "1",
+            "Set ROUTUN_LIVE_NETWORK_TESTS=1 to run external connectivity checks."
+        )
         guard let refTarget = StrategyTargets.all.first(where: { $0.isReference }) else {
             XCTFail("No reference target configured")
             return
@@ -90,6 +95,20 @@ final class StrategyOptimizerTests: XCTestCase {
         let optimizer = StrategyOptimizer()
         let result = optimizer.probe(target: refTarget, socksPort: nil, timeout: 4.0)
         XCTAssertTrue(result.isReachable, "Reference target (\(refTarget.urlString)) must be reachable on direct network: \(result.detail)")
+    }
+
+    func testGeneratedLaunchDaemonPlistUsesOnlyTheProtectedPayload() throws {
+        let data = try ServiceManager.launchDaemonPlistData()
+        let plist = try XCTUnwrap(
+            try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+        )
+
+        XCTAssertEqual(plist["Label"] as? String, RoutunConfig.serviceLabel)
+        XCTAssertEqual(plist["ProgramArguments"] as? [String], [RoutunConfig.daemonBinaryPath, "daemon"])
+        XCTAssertNil(plist["RunAtLoad"])
+        XCTAssertNil(plist["StandardOutPath"])
+        XCTAssertNil(plist["StandardErrorPath"])
+        XCTAssertEqual((plist["KeepAlive"] as? [String: Any])?["SuccessfulExit"] as? Bool, false)
     }
 }
 

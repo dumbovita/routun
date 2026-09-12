@@ -116,7 +116,6 @@ jobs:
         run: |
           swift build -c release
           swift test -c release
-          plutil -lint com.routun.routund.plist
           python3 -m json.tool config/routun.json > /dev/null
           python3 -m json.tool config/singbox.json > /dev/null
           ruby -c Formula/routun.rb
@@ -128,10 +127,12 @@ jobs:
           swiftc -O -target arm64-apple-macos14.0 Sources/*.swift -o routun-arm64
           swiftc -O -target x86_64-apple-macos14.0 Sources/*.swift -o routun-x86_64
           lipo -create -output routun routun-arm64 routun-x86_64
+          lipo routun -verify_arch arm64
+          lipo routun -verify_arch x86_64
           file routun
 
           ARTIFACT="routun-v${VERSION}-macos-universal.tar.gz"
-          tar -czf "$ARTIFACT" routun
+          tar -czf "$ARTIFACT" routun config
           shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
           echo "Universal artifact created: $ARTIFACT"
 
@@ -218,10 +219,19 @@ jobs:
           git fetch origin main
           git push origin HEAD:main
 
-      - name: Sync External Homebrew Tap (Optional)
-        if: env.HAS_TAP_TOKEN == 'true' && env.TAP_REPO != ''
+      - name: Check External Homebrew Tap Configuration
+        id: external_tap
         env:
-          HAS_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO || secrets.HOMEBREW_TAP_REPO }}
+        run: |
+          if [ -n "$TAP_TOKEN" ] && [ -n "$TAP_REPO" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync External Homebrew Tap (Optional)
+        if: steps.external_tap.outputs.enabled == 'true'
+        env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO || secrets.HOMEBREW_TAP_REPO }}
           VERSION: ${{ steps.prep.outputs.version }}

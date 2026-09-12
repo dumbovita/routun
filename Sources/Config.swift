@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public struct RoutunConfig: Codable {
     public var ciadpiPath: String
@@ -6,7 +7,6 @@ public struct RoutunConfig: Codable {
     public var ciadpiArgs: [String]
     public var socksHost: String
     public var socksPort: Int
-    public var tunInterface: String
     public var singboxConfig: String
     public var selectedProfile: String?
 
@@ -16,251 +16,138 @@ public struct RoutunConfig: Codable {
         case ciadpiArgs = "ciadpi_args"
         case socksHost = "socks_host"
         case socksPort = "socks_port"
-        case tunInterface = "tun_interface"
         case singboxConfig = "singbox_config"
         case selectedProfile = "selected_profile"
     }
 
-    public func save(to path: String? = nil) throws {
-        let targetPath = path ?? RoutunConfig.defaultConfigFile
-        let parentDir = (targetPath as NSString).deletingLastPathComponent
-        try FileManager.default.createDirectory(atPath: parentDir, withIntermediateDirectories: true, attributes: nil)
+    public static let serviceLabel = "com.routun.routund"
+    public static let appSupportDir = "/Library/Application Support/routun"
+    public static let serviceBinDir = "/usr/local/libexec/routun"
+    public static let serviceConfigDir = "\(appSupportDir)/config"
+    public static let serviceStateDir = "\(appSupportDir)/state"
+    public static let daemonBinaryPath = "\(serviceBinDir)/routund"
+    public static let serviceCiadpiPath = "\(serviceBinDir)/ciadpi"
+    public static let serviceSingboxPath = "\(serviceBinDir)/sing-box"
+    public static let defaultConfigFile = "\(serviceConfigDir)/routun.json"
+    public static let defaultSingboxConfigFile = "\(serviceConfigDir)/singbox.json"
+    public static let stateFile = "\(serviceStateDir)/state.json"
+    public static let launchDaemonPlist = "/Library/LaunchDaemons/\(serviceLabel).plist"
+
+    // Previous standalone releases stored these directly in Application Support.
+    // They are read only during an explicit root-authorized installation migration.
+    public static let legacyConfigFile = "\(appSupportDir)/routun.json"
+    public static let legacySingboxConfigFile = "\(appSupportDir)/singbox.json"
+
+    public func save(to path: String = RoutunConfig.defaultConfigFile) throws {
+        let parentDir = (path as NSString).deletingLastPathComponent
+        try FileManager.default.createDirectory(atPath: parentDir, withIntermediateDirectories: true)
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(self)
-        try data.write(to: URL(fileURLWithPath: targetPath), options: .atomic)
+        try encoder.encode(self).write(to: URL(fileURLWithPath: path), options: .atomic)
+        if path == RoutunConfig.defaultConfigFile, chmod(path, 0o644) != 0 {
+            throw CocoaError(.fileWriteUnknown)
+        }
     }
 
-    // Dynamic prefix detection (Homebrew Apple Silicon, Homebrew Intel, or Standalone)
-    public static var homebrewPrefix: String? {
-        if let env = ProcessInfo.processInfo.environment["HOMEBREW_PREFIX"], !env.isEmpty {
-            return env
-        }
-        let exec = Bundle.main.executablePath ?? CommandLine.arguments[0]
-        if exec.contains("/Cellar/routun/") {
-            let parts = exec.components(separatedBy: "/Cellar/routun/")
-            if let p = parts.first, !p.isEmpty { return p }
-        }
-        if exec.hasPrefix("/opt/homebrew/") { return "/opt/homebrew" }
-        if exec.hasPrefix("/usr/local/") { return "/usr/local" }
-
-        let fm = FileManager.default
-        if fm.isExecutableFile(atPath: "/opt/homebrew/bin/brew") { return "/opt/homebrew" }
-        if fm.isExecutableFile(atPath: "/usr/local/bin/brew") { return "/usr/local" }
-        return nil
+    public static func load() -> RoutunConfig {
+        load(from: defaultConfigFile) ?? defaultConfiguration()
     }
 
-    public static let appSupportDir = "/Library/Application Support/routun"
-    public static let installedBinaryPath = "/usr/local/bin/routun"
-
-    // Config Directory: Homebrew etc/routun or /Library/Application Support/routun
-    public static var configDir: String {
-        let fm = FileManager.default
-        if let prefix = homebrewPrefix {
-            let brewEtc = "\(prefix)/etc/routun"
-            if fm.fileExists(atPath: brewEtc) { return brewEtc }
-        }
-        let appSupport = "/Library/Application Support/routun"
-        if fm.fileExists(atPath: appSupport) { return appSupport }
-        if let prefix = homebrewPrefix {
-            return "\(prefix)/etc/routun"
-        }
-        return appSupport
-    }
-
-    public static var defaultConfigFile: String {
-        "\(configDir)/routun.json"
-    }
-
-    public static var defaultSingboxConfigFile: String {
-        let fm = FileManager.default
-        let inConfigDir = "\(configDir)/singbox.json"
-        if fm.fileExists(atPath: inConfigDir) { return inConfigDir }
-        if let prefix = homebrewPrefix {
-            let inBrewEtc = "\(prefix)/etc/routun/singbox.json"
-            if fm.fileExists(atPath: inBrewEtc) { return inBrewEtc }
-        }
-        if fm.fileExists(atPath: "/Library/Application Support/routun/singbox.json") {
-            return "/Library/Application Support/routun/singbox.json"
-        }
-        if fm.fileExists(atPath: "config/singbox.json") {
-            return "config/singbox.json"
-        }
-        return inConfigDir
-    }
-
-    // Service identification (detects Homebrew service or standalone)
-    public static var isHomebrewService: Bool {
-        FileManager.default.fileExists(atPath: "/Library/LaunchDaemons/sh.brew.routun.plist")
-            || FileManager.default.fileExists(atPath: "/Library/LaunchDaemons/homebrew.mxcl.routun.plist")
-    }
-
-    public static let candidatePlistPaths = [
-        "/Library/LaunchDaemons/sh.brew.routun.plist",
-        "/Library/LaunchDaemons/homebrew.mxcl.routun.plist",
-        "/Library/LaunchDaemons/com.routun.routund.plist",
-        "/Library/LaunchDaemons/com.routun.daemon.plist"
-    ]
-
-    public static var installedPlistPath: String? {
-        let fm = FileManager.default
-        for path in candidatePlistPaths {
-            if fm.fileExists(atPath: path) { return path }
-        }
-        return nil
-    }
-
-    public static var serviceLabel: String {
-        let fm = FileManager.default
-        if fm.fileExists(atPath: "/Library/LaunchDaemons/sh.brew.routun.plist") {
-            return "sh.brew.routun"
-        }
-        if fm.fileExists(atPath: "/Library/LaunchDaemons/homebrew.mxcl.routun.plist") {
-            return "homebrew.mxcl.routun"
-        }
-        if let plist = installedPlistPath {
-            if plist.contains("sh.brew") { return "sh.brew.routun" }
-            if plist.contains("homebrew") { return "homebrew.mxcl.routun" }
-            if plist.contains("daemon") { return "com.routun.daemon" }
-        }
-        return "com.routun.routund"
-    }
-
-    public static var executableBinaryPath: String {
-        if let prefix = homebrewPrefix {
-            let brewOpt = "\(prefix)/opt/routun/bin/routun"
-            if FileManager.default.fileExists(atPath: brewOpt) { return brewOpt }
-            let brewBin = "\(prefix)/bin/routun"
-            if FileManager.default.fileExists(atPath: brewBin) { return brewBin }
-        }
-        if FileManager.default.fileExists(atPath: installedBinaryPath) {
-            return installedBinaryPath
-        }
-        return Bundle.main.executablePath ?? "/usr/local/bin/routun"
-    }
-
-    public static var launchDaemonPlist: String {
-        if let installed = installedPlistPath {
+    public static func installationConfiguration() -> RoutunConfig {
+        if let installed = load(from: defaultConfigFile) {
             return installed
         }
-        if isHomebrewService || (homebrewPrefix != nil && FileManager.default.fileExists(atPath: "\(homebrewPrefix!)/opt/routun")) {
-            return "/Library/LaunchDaemons/sh.brew.routun.plist"
+        for path in [legacyConfigFile] + templatePaths(named: "routun.json") {
+            if let config = load(from: path) {
+                return config
+            }
         }
-        return "/Library/LaunchDaemons/com.routun.routund.plist"
+        return defaultConfiguration()
     }
 
-    // Log directory: Homebrew var/log/routun or /var/log/routun
-    public static var logDir: String {
-        let fm = FileManager.default
-        if let prefix = homebrewPrefix {
-            let brewLog = "\(prefix)/var/log/routun"
-            if fm.fileExists(atPath: brewLog) { return brewLog }
-        }
-        if fm.fileExists(atPath: "/var/log/routun") {
-            return "/var/log/routun"
-        }
-        if let prefix = homebrewPrefix {
-            return "\(prefix)/var/log/routun"
-        }
-        return "/var/log/routun"
+    /// The root daemon never honors executable or config paths from configuration.
+    public static func daemonConfiguration() -> RoutunConfig {
+        var config = load()
+        config.ciadpiPath = serviceCiadpiPath
+        config.singboxPath = serviceSingboxPath
+        config.singboxConfig = defaultSingboxConfigFile
+        return config
     }
 
-    public static var daemonLogFile: String { "\(logDir)/daemon.log" }
-    public static var daemonErrFile: String { "\(logDir)/daemon.err" }
+    public static func singboxTemplatePath(preferredPath: String) -> String? {
+        let candidates = [preferredPath, legacySingboxConfigFile] + templatePaths(named: "singbox.json")
+        return candidates.first(where: { FileManager.default.isReadableFile(atPath: $0) })
+    }
 
-    public static var pidFile: String {
-        let fm = FileManager.default
-        if let prefix = homebrewPrefix, fm.fileExists(atPath: "\(prefix)/var/run") {
-            return "\(prefix)/var/run/routun.pid"
+    public static func dependencySource(named name: String, configuredPath: String) -> String? {
+        let environmentKey = name == "ciadpi" ? "ROUTUN_CIADPI_SOURCE" : "ROUTUN_SINGBOX_SOURCE"
+        if let source = ProcessInfo.processInfo.environment[environmentKey], isExecutableBinary(atPath: source) {
+            return source
         }
-        return "/var/run/routun.pid"
+        if configuredPath != serviceCiadpiPath,
+           configuredPath != serviceSingboxPath,
+           isExecutableBinary(atPath: configuredPath) {
+            return configuredPath
+        }
+        return findBinary(named: name, searchPaths: ["/opt/homebrew/bin", "/usr/local/bin"])
+    }
+
+    public static func currentExecutablePath() -> String {
+        let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        if executable.hasPrefix("/") {
+            return URL(fileURLWithPath: executable).resolvingSymlinksInPath().path
+        }
+        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(executable)
+            .resolvingSymlinksInPath()
+            .path
+    }
+
+    public static func isExecutableBinary(atPath path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+            && !isDirectory.boolValue
+            && FileManager.default.isExecutableFile(atPath: path)
+    }
+
+    public static func findBinary(named name: String, searchPaths: [String]) -> String? {
+        for path in searchPaths {
+            let candidate = path.hasSuffix("/\(name)") ? path : "\(path)/\(name)"
+            if isExecutableBinary(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
     }
 
     public static func defaultConfiguration() -> RoutunConfig {
-        var searchDirs = [String]()
-        if let prefix = homebrewPrefix {
-            searchDirs.append("\(prefix)/bin")
-        }
-        searchDirs.append(contentsOf: [
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin"
-        ])
-
-        let ciadpi = findBinary(named: "ciadpi", searchPaths: searchDirs) ?? "/usr/local/bin/ciadpi"
-        let singbox = findBinary(named: "sing-box", searchPaths: searchDirs) ?? "/opt/homebrew/bin/sing-box"
-
-        return RoutunConfig(
-            ciadpiPath: ciadpi,
-            singboxPath: singbox,
+        RoutunConfig(
+            ciadpiPath: findBinary(named: "ciadpi", searchPaths: ["/opt/homebrew/bin", "/usr/local/bin"]) ?? "",
+            singboxPath: findBinary(named: "sing-box", searchPaths: ["/opt/homebrew/bin", "/usr/local/bin"]) ?? "",
             ciadpiArgs: ["-i", "127.0.0.1", "-p", "1080", "-A", "torst,ssl_err", "-s", "1", "-d", "3+s", "-r", "1+s", "-t", "3", "-c", "512"],
             socksHost: "127.0.0.1",
             socksPort: 1080,
-            tunInterface: "utun10",
             singboxConfig: defaultSingboxConfigFile,
             selectedProfile: "default"
         )
     }
 
-    public static func isExecutableBinary(atPath path: String) -> Bool {
-        var isDir: ObjCBool = false
-        return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && !isDir.boolValue && FileManager.default.isExecutableFile(atPath: path)
+    private static func load(from path: String) -> RoutunConfig? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+        return try? JSONDecoder().decode(RoutunConfig.self, from: data)
     }
 
-    public static func findBinary(named name: String, searchPaths: [String]) -> String? {
-        // Check given paths (both as directory prefix and direct path)
-        for path in searchPaths {
-            let candidate = path.hasSuffix("/\(name)") ? path : (path.hasSuffix("/") ? "\(path)\(name)" : "\(path)/\(name)")
-            if isExecutableBinary(atPath: candidate) {
-                return candidate
-            }
-            if isExecutableBinary(atPath: path) {
-                return path
-            }
-        }
-        // Check PATH environment variable
-        if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {
-            for dir in pathEnv.split(separator: ":") {
-                let candidate = String(dir) + "/" + name
-                if isExecutableBinary(atPath: candidate) {
-                    return candidate
-                }
-            }
-        }
-        return nil
-    }
-
-    public static func load() -> RoutunConfig {
-        let path = defaultConfigFile
-        if FileManager.default.fileExists(atPath: path),
-           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-           var config = try? JSONDecoder().decode(RoutunConfig.self, from: data) {
-            let fm = FileManager.default
-            if config.singboxConfig.isEmpty || !fm.fileExists(atPath: config.singboxConfig) {
-                config.singboxConfig = defaultSingboxConfigFile
-            }
-            if config.ciadpiPath.isEmpty || !isExecutableBinary(atPath: config.ciadpiPath) {
-                if let found = findBinary(named: "ciadpi", searchPaths: ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"]) {
-                    config.ciadpiPath = found
-                }
-            }
-            if config.singboxPath.isEmpty || !isExecutableBinary(atPath: config.singboxPath) {
-                if let found = findBinary(named: "sing-box", searchPaths: ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) {
-                    config.singboxPath = found
-                }
-            }
-            if !config.ciadpiArgs.contains("-A") && !config.ciadpiArgs.contains("--auto") {
-                if let profileId = config.selectedProfile, let p = StrategyProfiles.find(by: profileId) {
-                    config.ciadpiArgs = p.fullArgs(host: config.socksHost, port: config.socksPort)
-                } else if let pIdx = config.ciadpiArgs.firstIndex(of: "-p"), pIdx + 1 < config.ciadpiArgs.count {
-                    config.ciadpiArgs.insert(contentsOf: ["-A", "torst,ssl_err"], at: pIdx + 2)
-                } else {
-                    config.ciadpiArgs.insert(contentsOf: ["-A", "torst,ssl_err"], at: 0)
-                }
-            }
-            return config
-        }
-        return defaultConfiguration()
+    private static func templatePaths(named name: String) -> [String] {
+        let executable = URL(fileURLWithPath: currentExecutablePath()).resolvingSymlinksInPath()
+        let executableDirectory = executable.deletingLastPathComponent()
+        let prefix = executable.deletingLastPathComponent().deletingLastPathComponent()
+        return [
+            executableDirectory.appendingPathComponent("config/\(name)").path,
+            prefix.appendingPathComponent("share/routun/\(name)").path,
+            "\(FileManager.default.currentDirectoryPath)/config/\(name)",
+            "/opt/homebrew/etc/routun/\(name)",
+            "/usr/local/etc/routun/\(name)"
+        ]
     }
 }

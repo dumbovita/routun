@@ -8,7 +8,6 @@
     {
       "type": "tun",
       "tag": "tun-in",
-      "interface_name": "utun10",
       "address": [
         "172.19.0.1/30"
       ],
@@ -43,14 +42,6 @@
       {
         "process_name": [
           "ciadpi"
-        ],
-        "action": "route",
-        "outbound": "direct"
-      },
-      {
-        "process_path": [
-          "/usr/local/bin/ciadpi",
-          "/opt/homebrew/bin/ciadpi"
         ],
         "action": "route",
         "outbound": "direct"

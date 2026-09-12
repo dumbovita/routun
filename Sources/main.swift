@@ -1,6 +1,6 @@
 import Foundation
 
-let version = "1.2.7"
+let version = "1.3.0"
 
 func printUsage() {
     print("""
@@ -10,16 +10,16 @@ func printUsage() {
       routun <command> [options]
 
     Commands:
-      status          Show live service status, child PIDs, ports, TUN, and DPI health
+      status          Show service status, child PIDs, SOCKS port, and TUN health
       start           Start the routun LaunchDaemon background service (requires sudo)
       stop            Stop the routun LaunchDaemon background service (requires sudo)
       restart         Restart the service and cleanly refresh network routing (requires sudo)
-      logs            Display service logs (supports -f/--follow, -n <lines>, -e/--error)
+      logs            Display unified service logs (supports -f/--follow, -n <lines>, -e/--error)
       doctor          Run full system and environment diagnostic checks
       optimize        Run automated DPI evasion optimization (supports -v, -q, and custom domains)
       profile         View or switch ByeDPI strategy profiles (list [--all], set <name>, show)
-      install         Install executable, configs, and LaunchDaemon (requires sudo)
-      uninstall       Uninstall service, configs, and revert system routing (requires sudo)
+      install         Install or update the protected service payload and LaunchDaemon (requires sudo)
+      uninstall       Unregister the service and remove its protected payload (requires sudo)
       daemon          Internal: run supervisor daemon in foreground (managed by launchd)
       version         Show routun version
       help            Show this help message
@@ -127,7 +127,7 @@ case "daemon":
     daemon.run()
 
 case "version", "-v", "--version":
-    print("routun version \(version) (arm64-apple-macos)")
+    print("routun version \(version)")
 
 case "help", "-h", "--help":
     printUsage()

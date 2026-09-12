@@ -366,6 +366,8 @@ public final class StrategyOptimizer {
 
     private let physicalInterface: String?
     private let probeOverride: ((StrategyTarget, Int?, Double) -> ProbeResult)?
+    private let activeProcessLock = NSLock()
+    private var activeTestProcess: Process?
 
     public static func findFreePort() -> Int {
         var addr = sockaddr_in()
@@ -423,7 +425,18 @@ public final class StrategyOptimizer {
         return targets
     }
 
-    /// Detect active physical network interface (e.g. en0) to bypass utun10 for baseline tests
+    public func cancel() {
+        activeProcessLock.lock()
+        let process = activeTestProcess
+        activeTestProcess = nil
+        activeProcessLock.unlock()
+
+        if let process {
+            terminateProcess(process)
+        }
+    }
+
+    /// Detect the active physical network interface for baseline tests.
     public static func detectPhysicalInterface() -> String? {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/sbin/netstat")
@@ -578,10 +591,8 @@ public final class StrategyOptimizer {
     private func spawnTestCiadpi(profile: StrategyProfile, port: Int) -> Process? {
         guard FileManager.default.isExecutableFile(atPath: ciadpiPath) else { return nil }
 
-        // Ensure port is not lingering from a previous failed instance
         if NetUtils.isPortOpen(host: "127.0.0.1", port: port, timeout: 0.05) {
-            _ = ServiceManager.shared.runCommand("/usr/bin/pkill", ["-9", "-f", "ciadpi.*\(port)"])
-            usleep(80_000)
+            return nil
         }
 
         let proc = Process()
@@ -598,35 +609,40 @@ public final class StrategyOptimizer {
 
         // Wait up to 300ms for this specific process to start listening (checking every 15ms)
         for _ in 0..<20 {
-            guard proc.isRunning else { return nil }
+            guard proc.isRunning else {
+                proc.waitUntilExit()
+                return nil
+            }
             if NetUtils.isPortOpen(host: "127.0.0.1", port: port, timeout: 0.015) {
                 return proc
             }
             usleep(15_000)
         }
 
-        proc.terminate()
+        terminateProcess(proc)
         return nil
     }
 
     /// Cleanly terminate a process with SIGTERM and SIGKILL fallback
-    private func terminateProcess(_ proc: Process, port: Int? = nil) {
-        let p = port ?? testPort
+    private func terminateProcess(_ proc: Process) {
         if proc.isRunning {
             proc.terminate()
+            kill(proc.processIdentifier, SIGHUP)
             for _ in 0..<5 {
                 if !proc.isRunning { break }
                 usleep(30_000)
             }
             if proc.isRunning {
                 kill(proc.processIdentifier, SIGKILL)
-                proc.waitUntilExit()
             }
         }
-        if NetUtils.isPortOpen(host: "127.0.0.1", port: p, timeout: 0.05) {
-            _ = ServiceManager.shared.runCommand("/usr/bin/pkill", ["-9", "-f", "ciadpi.*\(p)"])
-            usleep(50_000)
-        }
+        proc.waitUntilExit()
+    }
+
+    private func setActiveTestProcess(_ process: Process?) {
+        activeProcessLock.lock()
+        activeTestProcess = process
+        activeProcessLock.unlock()
     }
 
     /// Run the comprehensive strategy optimization routine.
@@ -698,9 +714,11 @@ public final class StrategyOptimizer {
                 emit("  [\(index + 1)/\(candidateProfiles.count)] \(profile.id.padding(toLength: 28, withPad: " ", startingAt: 0)) \u{001B}[31mFailed to launch test instance\u{001B}[0m")
                 continue
             }
+            setActiveTestProcess(testProc)
 
             defer {
                 terminateProcess(testProc)
+                setActiveTestProcess(nil)
             }
 
             // Test candidate against the entire target list (all links)
@@ -818,7 +836,11 @@ public final class StrategyOptimizer {
         var verifiedScores = [Phase1Score]()
         for (idx, contender) in topContenders.enumerated() {
             guard let testProc = spawnTestCiadpi(profile: contender.profile, port: testPort) else { continue }
-            defer { terminateProcess(testProc) }
+            setActiveTestProcess(testProc)
+            defer {
+                terminateProcess(testProc)
+                setActiveTestProcess(nil)
+            }
 
             let fullResults = probeConcurrently(targets: evalTargets, socksPort: testPort, timeout: 1.8, attempts: 2)
             let candidateReachableHosts = Set(fullResults.filter { $0.isReliable }.map { $0.target.host })

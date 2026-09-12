@@ -16,7 +16,7 @@ A lightweight background service coordinating ByeDPI (`ciadpi`) and Sing-box (`u
 
 - macOS 14.0 (Sonoma) or later (Apple Silicon & Intel)
 - Root / administrator privileges (`sudo` is required to create virtual `utun` interfaces and manage kernel routing tables)
-- [Homebrew](https://brew.sh) (recommended for package and service management)
+- [Homebrew](https://brew.sh) (recommended for distribution and upgrades)
 - [`sing-box`](https://github.com/SagerNet/sing-box) (installed automatically as a dependency by Homebrew)
 - [`ciadpi`](https://github.com/hufrea/byedpi) (ByeDPI — built and installed automatically from source by Homebrew / `install.sh`)
 
@@ -31,10 +31,10 @@ brew trust https://github.com/dumbovita/routun
 # Tap and install
 brew tap dumbovita/routun https://github.com/dumbovita/routun
 brew install routun
-sudo brew services start routun
+sudo routun install
 ```
 
-> **Note:** `sudo` is required because creating macOS virtual TUN interfaces and modifying system routes require root privileges (`require_root true`).
+`routun install` copies the daemon and its two runtime dependencies into the root-owned payload directory `/usr/local/libexec/routun`, stores root-owned configuration under `/Library/Application Support/routun`, then registers the one system LaunchDaemon. Homebrew does not manage the service.
 
 ### Manual Installation
 
@@ -46,32 +46,26 @@ cd routun
 ./install.sh
 ```
 
-*(Alternatively, run `sudo make install`.)*
+*(Alternatively, run `make install`; it requests `sudo` only for the protected installation steps.)*
+
+The GitHub release archive contains the same Universal 2 executable and its
+configuration templates. Extract it, install `sing-box` and `ciadpi` in
+`/opt/homebrew/bin` or `/usr/local/bin`, then run `sudo ./routun install` from
+the extracted directory.
 
 ## Usage
 
 ### Service Management
 
-With Homebrew:
-
-```bash
-# Start service
-sudo brew services start routun
-
-# Stop service
-sudo brew services stop routun
-
-# Restart service
-sudo brew services restart routun
-```
-
-With standalone installation:
+Both installation methods use these same commands:
 
 ```bash
 sudo routun start
 sudo routun stop
 sudo routun restart
 ```
+
+After `brew upgrade routun`, run `sudo routun install` again. This updates the protected payload and restarts the existing `com.routun.routund` LaunchDaemon; it does not create a second service.
 
 ### CLI Utilities
 
@@ -123,7 +117,7 @@ routun profile show
 ### Via Homebrew
 
 ```bash
-sudo brew services stop routun
+sudo routun uninstall
 brew uninstall routun
 ```
 
@@ -133,9 +127,9 @@ brew uninstall routun
 sudo routun uninstall
 ```
 
-*(Alternatively, run `./uninstall.sh` if you still have the repository folder, or `sudo make uninstall`.)*
+*(Alternatively, run `./uninstall.sh` if you still have the repository folder, or `make uninstall`.)*
 
-This safely stops the running daemon, removes LaunchDaemon plists and configuration files, and restores default macOS network routing.
+This safely stops the running daemon, removes only routun-owned service files, and restores default macOS routing through the daemon's ordered shutdown. `routun uninstall` deliberately does not remove Homebrew-managed files; use `brew uninstall` for those.
 
 ## AI Disclaimer
 

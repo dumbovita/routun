@@ -11,7 +11,7 @@ public final class RoutunDaemon {
     private var sigtermSource: DispatchSourceSignal?
     private var sigintSource: DispatchSourceSignal?
 
-    public init(config: RoutunConfig = RoutunConfig.load()) {
+    public init(config: RoutunConfig = RoutunConfig.daemonConfiguration()) {
         self.config = config
     }
 
@@ -23,10 +23,9 @@ public final class RoutunDaemon {
 
         logger.info("Initializing routun background service supervisor...")
 
-        applyResourceLimits()
         verifyBinariesAndConfig()
         cleanupStaleProcesses()
-        cleanupStalePidFile()
+        cleanupStaleStateFile()
         setupSignalHandlers()
 
         startCiadpi()
@@ -38,15 +37,6 @@ public final class RoutunDaemon {
         logger.info("routun service active: ciadpi (PID \(ciadpiProcess?.processIdentifier ?? 0)), sing-box (PID \(singboxProcess?.processIdentifier ?? 0)).")
 
         dispatchMain()
-    }
-
-    private func applyResourceLimits() {
-        var rlp = rlimit(rlim_cur: 10240, rlim_max: 10240)
-        if setrlimit(RLIMIT_NOFILE, &rlp) != 0 {
-            logger.warn("Unable to set RLIMIT_NOFILE to 10240: \(String(cString: strerror(errno)))")
-        } else {
-            logger.info("Configured socket file descriptor limit: RLIMIT_NOFILE = 10240.")
-        }
     }
 
     private func verifyBinariesAndConfig() {
@@ -72,7 +62,6 @@ public final class RoutunDaemon {
         let terminated = ServiceManager.shared.terminateRecordedChildren()
         if terminated > 0 {
             logger.warn("Stopped \(terminated) child process(es) recorded by the previous routun service.")
-            usleep(300_000)
         }
     }
 
@@ -109,7 +98,7 @@ public final class RoutunDaemon {
         }
 
         do {
-            try proc.run()
+            try runChild(proc)
             self.ciadpiProcess = proc
             logger.info("ByeDPI spawned successfully (PID: \(proc.processIdentifier)).")
         } catch {
@@ -128,8 +117,12 @@ public final class RoutunDaemon {
             }
 
             if NetUtils.isPortOpen(host: config.socksHost, port: config.socksPort, timeout: 0.1) {
-                logger.info("ByeDPI port \(config.socksPort) confirmed ready (probe \(i)).")
-                return
+                if proc.isRunning {
+                    logger.info("ByeDPI port \(config.socksPort) confirmed ready (probe \(i)).")
+                    return
+                }
+                logger.error("ByeDPI exited while its SOCKS5 port was being verified.")
+                exit(1)
             }
             usleep(100_000) // 100ms
         }
@@ -153,7 +146,7 @@ public final class RoutunDaemon {
         }
 
         do {
-            try proc.run()
+            try runChild(proc)
             self.singboxProcess = proc
             logger.info("sing-box spawned successfully (PID: \(proc.processIdentifier)).")
         } catch {
@@ -164,20 +157,32 @@ public final class RoutunDaemon {
     }
 
     private func verifyTunInterface() {
-        usleep(350_000) // 350ms for utun allocation and route table hook
-
         guard let singbox = singboxProcess, singbox.isRunning else {
             logger.error("sing-box exited immediately after startup. Check logs for configuration or permission errors.")
             emergencyTeardown()
             return
         }
 
-        let (exists, isUp, ip) = NetUtils.getInterfaceInfo(name: config.tunInterface)
-        if exists && isUp {
-            logger.info("Interface \(config.tunInterface) verified active (IP: \(ip ?? "assigned")).")
+        if let interface = NetUtils.tunInterface() {
+            let (_, isUp, ip) = NetUtils.getInterfaceInfo(name: interface)
+            if isUp {
+                logger.info("Interface \(interface) verified active (IP: \(ip ?? "assigned")).")
+            } else {
+                logger.warn("Interface \(interface) exists but is not yet reported UP.")
+            }
         } else {
-            logger.warn("Interface \(config.tunInterface) not yet reported UP, but sing-box process is healthy.")
+            logger.warn("No routun TUN interface is visible yet, but sing-box process is healthy.")
         }
+    }
+
+    private func runChild(_ process: Process) throws {
+        signal(SIGTERM, SIG_DFL)
+        signal(SIGINT, SIG_DFL)
+        defer {
+            signal(SIGTERM, SIG_IGN)
+            signal(SIGINT, SIG_IGN)
+        }
+        try process.run()
     }
 
     private func writePidFile() {
@@ -186,17 +191,22 @@ public final class RoutunDaemon {
             "ciadpi_pid": ciadpiProcess?.processIdentifier ?? 0,
             "singbox_pid": singboxProcess?.processIdentifier ?? 0,
             "started_at": ISO8601DateFormatter().string(from: Date()),
-            "tun_interface": config.tunInterface,
+            "tun_interface": NetUtils.tunInterface() ?? "",
             "socks_port": config.socksPort
         ]
 
-        if let data = try? JSONSerialization.data(withJSONObject: state, options: .prettyPrinted) {
-            try? data.write(to: URL(fileURLWithPath: RoutunConfig.pidFile))
+        if let data = try? JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys]) {
+            do {
+                try data.write(to: URL(fileURLWithPath: RoutunConfig.stateFile), options: .atomic)
+                chmod(RoutunConfig.stateFile, 0o644)
+            } catch {
+                logger.warn("Could not write service state: \(error.localizedDescription)")
+            }
         }
     }
 
-    private func cleanupStalePidFile() {
-        try? FileManager.default.removeItem(atPath: RoutunConfig.pidFile)
+    private func cleanupStaleStateFile() {
+        try? FileManager.default.removeItem(atPath: RoutunConfig.stateFile)
     }
 
     private func handleChildExit(process: Process, name: String) {
@@ -218,7 +228,7 @@ public final class RoutunDaemon {
             terminateAndWait(process: ciadpi, timeoutSeconds: 1.0, name: "ByeDPI")
         }
 
-        cleanupStalePidFile()
+        cleanupStaleStateFile()
         logger.error("Emergency teardown finished. Exiting with failure status for launchd supervisor restart.")
         exit(1)
     }
@@ -229,7 +239,7 @@ public final class RoutunDaemon {
 
         logger.info("Received \(signalName). Performing graceful shutdown sequence...")
 
-        // Step 1: Terminate sing-box first. This destroys utun10 and restores native macOS routing.
+        // Terminate sing-box first so its TUN routes are removed before ByeDPI exits.
         if let singbox = singboxProcess {
             logger.info("Stopping sing-box to restore default network routes...")
             terminateAndWait(process: singbox, timeoutSeconds: 3.0, name: "sing-box")
@@ -243,7 +253,7 @@ public final class RoutunDaemon {
             logger.info("ByeDPI stopped.")
         }
 
-        cleanupStalePidFile()
+        cleanupStaleStateFile()
         logger.info("routun service stopped cleanly.")
         exit(0)
     }
@@ -253,6 +263,9 @@ public final class RoutunDaemon {
         guard pid > 0 else { return }
 
         process.terminate() // sends SIGTERM
+        if name == "ByeDPI" {
+            kill(pid, SIGHUP)
+        }
 
         let deadlineNs = DispatchTime.now().uptimeNanoseconds + UInt64(timeoutSeconds * 1_000_000_000)
         var status: Int32 = 0

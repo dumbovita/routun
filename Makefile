@@ -1,5 +1,7 @@
 SWIFTC = swiftc
-SWIFT_FLAGS = -O
+MACOS_DEPLOYMENT_TARGET = 14.0
+ARCH ?= $(shell uname -m)
+SWIFT_FLAGS = -O -target $(ARCH)-apple-macos$(MACOS_DEPLOYMENT_TARGET)
 SOURCES := $(wildcard Sources/*.swift)
 TARGET = routun
 
@@ -15,8 +17,8 @@ $(TARGET): $(SOURCES)
 test:
 	swift test
 
-install: build
-	@sudo ./install.sh
+install:
+	@./install.sh
 
 uninstall:
 	@if command -v routun >/dev/null 2>&1; then sudo routun uninstall; else sudo ./uninstall.sh; fi

@@ -84,61 +84,28 @@ public final class NetUtils {
         return (found, isUp, ipStr)
     }
 
-    public static func testDPIBypass(url: String = "https://discord.com", timeout: TimeInterval = 3.5) -> (success: Bool, message: String) {
-        guard let requestURL = URL(string: url) else {
-            return (false, "Invalid URL")
-        }
+    public static func tunInterface(withIPv4Address targetAddress: String = "172.19.0.1") -> String? {
+        var ifap: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifap) == 0, let first = ifap else { return nil }
+        defer { freeifaddrs(ifap) }
 
-        var request = URLRequest(url: requestURL)
-        request.httpMethod = "HEAD"
-        request.timeoutInterval = timeout
-        request.setValue("Mozilla/5.0 (Macintosh; Apple Mac OS X) routun/1.0", forHTTPHeaderField: "User-Agent")
+        var current: UnsafeMutablePointer<ifaddrs>? = first
+        while let interface = current {
+            defer { current = interface.pointee.ifa_next }
+            guard let address = interface.pointee.ifa_addr,
+                  address.pointee.sa_family == UInt8(AF_INET) else { continue }
 
-        let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = timeout
-        config.timeoutIntervalForResource = timeout
-        let session = URLSession(configuration: config)
-        defer { session.invalidateAndCancel() }
-
-        let semaphore = DispatchSemaphore(value: 0)
-        let lock = NSLock()
-        var completed = false
-        var resultSuccess = false
-        var resultMessage = ""
-
-        let task = session.dataTask(with: request) { _, response, error in
-            lock.lock()
-            guard !completed else {
-                lock.unlock()
-                return
+            var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+            address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
+                var sinAddress = sin.pointee.sin_addr
+                _ = inet_ntop(AF_INET, &sinAddress, &buffer, socklen_t(INET_ADDRSTRLEN))
             }
-            if let error = error {
-                resultMessage = error.localizedDescription
-                resultSuccess = false
-            } else if let httpResponse = response as? HTTPURLResponse {
-                resultSuccess = (200...399).contains(httpResponse.statusCode)
-                resultMessage = "HTTP \(httpResponse.statusCode)"
-            } else {
-                resultSuccess = false
-                resultMessage = "No response"
+            let name = String(cString: interface.pointee.ifa_name)
+            if name.hasPrefix("utun"), String(cString: buffer) == targetAddress {
+                return name
             }
-            completed = true
-            lock.unlock()
-            semaphore.signal()
         }
-
-        task.resume()
-        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
-            lock.lock()
-            completed = true
-            lock.unlock()
-            task.cancel()
-            return (false, "Connection timed out (\(timeout)s)")
-        }
-
-        lock.lock()
-        defer { lock.unlock() }
-        return (resultSuccess, resultMessage)
+        return nil
     }
 
     public static func isProcessAlive(pid: Int) -> Bool {

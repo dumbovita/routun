@@ -1,177 +1,52 @@
 #!/bin/bash
-# ==============================================================================
-# routun - Automated Installation & Activation Script for macOS
-# ==============================================================================
-
-set -e
-
-# Require root privileges
-if [ "$EUID" -ne 0 ]; then
-    echo "Elevating privileges to root..."
-    exec sudo "$0" "$@"
-fi
+# Build the manual CLI, then hand all service registration to that same CLI.
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo "============================================================"
-echo " routun - Transparent TUN-based network routing for macOS"
-echo "============================================================"
-
-# 1. Check prerequisites
-echo "[1/7] Verifying dependencies..."
-
-CIADPI_BIN=""
-for path in "/usr/local/bin/ciadpi" "/opt/homebrew/bin/ciadpi" "$(command -v ciadpi 2>/dev/null)"; do
-    if [ -x "$path" ]; then
-        CIADPI_BIN="$path"
-        break
-    fi
-done
-
-SINGBOX_BIN=""
-for path in "/opt/homebrew/bin/sing-box" "/usr/local/bin/sing-box" "$(command -v sing-box 2>/dev/null)"; do
-    if [ -x "$path" ]; then
-        SINGBOX_BIN="$path"
-        break
-    fi
-done
-
-if [ -z "$CIADPI_BIN" ]; then
-    echo "  'ciadpi' (ByeDPI) not found. Compiling ByeDPI v0.17.3 from source..."
-    TMP_DIR=$(mktemp -d)
-    if curl -sSL "https://github.com/hufrea/byedpi/archive/refs/tags/v0.17.3.tar.gz" -o "$TMP_DIR/byedpi.tar.gz"; then
-        tar -xzf "$TMP_DIR/byedpi.tar.gz" -C "$TMP_DIR"
-        if make -C "$TMP_DIR/byedpi-0.17.3" >/dev/null 2>&1; then
-            mkdir -p "/usr/local/bin"
-            cp -f "$TMP_DIR/byedpi-0.17.3/ciadpi" "/usr/local/bin/ciadpi"
-            chmod 755 "/usr/local/bin/ciadpi"
-            CIADPI_BIN="/usr/local/bin/ciadpi"
-            echo "  Successfully compiled and installed ciadpi to /usr/local/bin/ciadpi"
-        fi
-    fi
-    rm -rf "$TMP_DIR"
-fi
-
-if [ -z "$CIADPI_BIN" ]; then
-    echo "ERROR: 'ciadpi' (ByeDPI) executable not found and automatic compilation failed."
-    echo "Please place 'ciadpi' in /usr/local/bin/ciadpi and make it executable (chmod +x)."
-    exit 1
-fi
-echo "  Found ciadpi at: $CIADPI_BIN"
-
-if [ -z "$SINGBOX_BIN" ]; then
-    echo "ERROR: 'sing-box' executable not found."
-    echo "Please install it via Homebrew: brew install sing-box"
-    exit 1
-fi
-echo "  Found sing-box at: $SINGBOX_BIN"
-
 if ! command -v swiftc >/dev/null 2>&1; then
-    echo "ERROR: 'swiftc' compiler not found. Please install Xcode Command Line Tools: xcode-select --install"
+    echo "ERROR: swiftc is required. Install Xcode Command Line Tools first."
     exit 1
 fi
 
-# 2. Build routun binary
-echo "[2/7] Compiling native Swift binary (arm64/release)..."
-swiftc -O Sources/*.swift -o routun
-chmod 755 routun
-
-# 3. Stop old unmanaged processes and any existing service
-echo "[3/7] Stopping and cleaning up any existing routun services..."
-for srv in "com.routun.routund" "com.routun.daemon" "sh.brew.routun" "homebrew.mxcl.routun"; do
-    launchctl bootout "system/$srv" 2>/dev/null || true
-    for uid in $(dscl . -list /Users UniqueID 2>/dev/null | awk '$2 >= 500 {print $2}'); do
-        launchctl bootout "gui/$uid/$srv" 2>/dev/null || true
-    done
-done
-rm -f "/Library/LaunchDaemons/com.routun.daemon.plist"
-rm -f "/Library/LaunchDaemons/sh.brew.routun.plist"
-rm -f "/Library/LaunchDaemons/homebrew.mxcl.routun.plist"
-for user_dir in /Users/*; do
-    if [ -d "$user_dir/Library/LaunchAgents" ]; then
-        rm -f "$user_dir/Library/LaunchAgents/sh.brew.routun.plist"
-        rm -f "$user_dir/Library/LaunchAgents/homebrew.mxcl.routun.plist"
-        rm -f "$user_dir/Library/LaunchAgents/com.routun."*
-    fi
-done
-sleep 1
-
-# Clean up standalone background processes gracefully
-killall -TERM sing-box 2>/dev/null || true
-killall -TERM ciadpi 2>/dev/null || true
-sleep 1.5
-
-# 4. Create directories with proper macOS permissions
-echo "[4/7] Creating system directories..."
-mkdir -p "/usr/local/bin"
-mkdir -p "/Library/Application Support/routun"
-mkdir -p "/var/log/routun"
-
-chmod 755 "/Library/Application Support/routun"
-chown root:wheel "/Library/Application Support/routun"
-
-chmod 755 "/var/log/routun"
-chown root:wheel "/var/log/routun"
-
-# 5. Install binaries and configuration
-echo "[5/7] Installing binaries and configuration..."
-cp -f routun "/usr/local/bin/routun"
-chown root:wheel "/usr/local/bin/routun"
-chmod 755 "/usr/local/bin/routun"
-
-cp -f config/singbox.json "/Library/Application Support/routun/singbox.json"
-chown root:wheel "/Library/Application Support/routun/singbox.json"
-chmod 644 "/Library/Application Support/routun/singbox.json"
-
-cp -f config/routun.json "/Library/Application Support/routun/routun.json"
-chown root:wheel "/Library/Application Support/routun/routun.json"
-chmod 644 "/Library/Application Support/routun/routun.json"
-
-# Validate singbox configuration
-echo "  Validating sing-box configuration syntax..."
-"$SINGBOX_BIN" check -c "/Library/Application Support/routun/singbox.json"
-
-# 6. Install LaunchDaemon plist
-echo "[6/7] Installing and activating LaunchDaemon..."
-cp -f com.routun.routund.plist "/Library/LaunchDaemons/com.routun.routund.plist"
-chown root:wheel "/Library/LaunchDaemons/com.routun.routund.plist"
-chmod 644 "/Library/LaunchDaemons/com.routun.routund.plist"
-
-# Bootstrap and kickstart the service
-launchctl bootstrap system /Library/LaunchDaemons/com.routun.routund.plist 2>/dev/null || \
-launchctl load -w /Library/LaunchDaemons/com.routun.routund.plist 2>/dev/null || true
-
-launchctl kickstart -k system/com.routun.routund 2>/dev/null || true
-
-# 7. Verification
-echo "[7/7] Verifying service initialization..."
-sleep 2
-
-/usr/local/bin/routun status
-
-# Optional automatic strategy optimization
-if [ -t 0 ]; then
-    echo ""
-    read -r -p "Run automatic DPI strategy optimization (blockcheck) now? [y/N]: " OPT_CHOICE
-    if [[ "$OPT_CHOICE" =~ ^[Yy]$ ]]; then
-        /usr/local/bin/routun optimize
-    fi
+SINGBOX_BIN="$(command -v sing-box || true)"
+if [ -z "$SINGBOX_BIN" ] || [ ! -x "$SINGBOX_BIN" ]; then
+    echo "ERROR: sing-box is required. Install it first (for example: brew install sing-box)."
+    exit 1
 fi
 
-echo ""
-echo "============================================================"
-echo " routun installation and activation complete!"
-echo " Service is running continuously under launchd management."
-echo ""
-echo " Useful commands:"
-echo "   routun status          - Check live service status & DPI health"
-echo "   routun optimize        - Auto-detect best ByeDPI strategy profile"
-echo "   routun profile list    - View and switch ByeDPI strategy profiles"
-echo "   sudo routun stop       - Stop service"
-echo "   sudo routun start      - Start service"
-echo "   sudo routun restart    - Clean restart"
-echo "   routun logs -f         - Stream live logs"
-echo "   routun doctor          - Run full diagnostics"
-echo "   sudo routun uninstall  - Cleanly remove service and files"
-echo "============================================================"
+CIADPI_BIN="$(command -v ciadpi || true)"
+BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/routun-install.XXXXXX")"
+trap 'rm -rf "$BUILD_DIR"' EXIT
+
+if [ -z "$CIADPI_BIN" ] || [ ! -x "$CIADPI_BIN" ]; then
+    echo "ciadpi not found; building ByeDPI v0.17.3 from its pinned source archive..."
+    ARCHIVE="$BUILD_DIR/byedpi.tar.gz"
+    EXPECTED_SHA256="0a9cb8585554c68c3e2be88c33c9bf6f99f8e8c7f54b362285adab99e262566c"
+    curl --fail --location --silent --show-error \
+        "https://github.com/hufrea/byedpi/archive/refs/tags/v0.17.3.tar.gz" \
+        --output "$ARCHIVE"
+    ACTUAL_SHA256="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
+    if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+        echo "ERROR: ByeDPI archive checksum did not match the pinned release."
+        exit 1
+    fi
+    tar -xzf "$ARCHIVE" -C "$BUILD_DIR"
+    make -C "$BUILD_DIR/byedpi-0.17.3"
+    CIADPI_BIN="$BUILD_DIR/byedpi-0.17.3/ciadpi"
+fi
+
+echo "Building routun for the current Mac architecture..."
+swiftc -O -target "$(uname -m)-apple-macos14.0" Sources/*.swift -o "$BUILD_DIR/routun"
+
+echo "Installing the manual CLI to /usr/local/bin/routun..."
+sudo /usr/bin/install -o root -g wheel -m 755 "$BUILD_DIR/routun" /usr/local/bin/routun
+
+echo "Installing the protected LaunchDaemon payload..."
+sudo /usr/bin/env \
+    ROUTUN_CIADPI_SOURCE="$CIADPI_BIN" \
+    ROUTUN_SINGBOX_SOURCE="$SINGBOX_BIN" \
+    /usr/local/bin/routun install
+
+echo "Installation complete. Use 'routun status' and 'sudo routun stop'."

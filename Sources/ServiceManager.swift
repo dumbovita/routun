@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct ServiceState {
@@ -7,226 +8,313 @@ public struct ServiceState {
     public let ciadpiPid: Int?
     public let singboxPid: Int?
     public let startedAt: String?
+    public let tunInterface: String?
 }
 
 public final class ServiceManager {
     public static let shared = ServiceManager()
 
+    private let legacyLabels = ["sh.brew.routun", "homebrew.mxcl.routun", "com.routun.daemon"]
+    private let legacyPlists = [
+        "/Library/LaunchDaemons/sh.brew.routun.plist",
+        "/Library/LaunchDaemons/homebrew.mxcl.routun.plist",
+        "/Library/LaunchDaemons/com.routun.daemon.plist"
+    ]
+
     public func getStatus() -> ServiceState {
-        var isLoaded = false
-        var output = ""
-        let candidateLabels = [
-            RoutunConfig.serviceLabel,
-            "sh.brew.routun",
-            "homebrew.mxcl.routun",
-            "com.routun.routund",
-            "com.routun.daemon"
-        ]
-        for label in candidateLabels {
-            let (code, out) = runCommand("/bin/launchctl", ["print", "system/\(label)"])
-            if code == 0 {
-                isLoaded = true
-                output = out
-                break
-            }
-        }
-        var isRunning = false
-        var supervisorPid: Int?
-        var ciadpiPid: Int?
-        var singboxPid: Int?
-        var startedAt: String?
-
-        if isLoaded {
-            for line in output.components(separatedBy: .newlines) {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if trimmed.hasPrefix("pid = ") {
-                    let parts = trimmed.components(separatedBy: "=")
-                    if parts.count == 2, let pid = Int(parts[1].trimmingCharacters(in: .whitespaces)) {
-                        supervisorPid = pid
-                        isRunning = true
-                    }
-                }
-            }
+        let (code, _) = runCommand("/bin/launchctl", ["print", "system/\(RoutunConfig.serviceLabel)"])
+        guard code == 0 else {
+            return ServiceState(isLoaded: false, isRunning: false, supervisorPid: nil, ciadpiPid: nil, singboxPid: nil, startedAt: nil, tunInterface: nil)
         }
 
-        if FileManager.default.fileExists(atPath: RoutunConfig.pidFile),
-           let data = try? Data(contentsOf: URL(fileURLWithPath: RoutunConfig.pidFile)),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let supPid = json["supervisor_pid"] as? Int {
-                supervisorPid = supPid
-            }
-            if let cPid = json["ciadpi_pid"] as? Int {
-                ciadpiPid = cPid
-            }
-            if let sPid = json["singbox_pid"] as? Int {
-                singboxPid = sPid
-            }
-            if let started = json["started_at"] as? String {
-                startedAt = started
-            }
-            if let supervisorPid, NetUtils.isProcessAlive(pid: supervisorPid) {
-                isRunning = true
-            }
-        }
-
+        let state = readState()
+        let supervisorPid = state?["supervisor_pid"] as? Int
         return ServiceState(
-            isLoaded: isLoaded,
-            isRunning: isRunning,
+            isLoaded: true,
+            isRunning: supervisorPid.map(NetUtils.isProcessAlive) ?? false,
             supervisorPid: supervisorPid,
-            ciadpiPid: ciadpiPid,
-            singboxPid: singboxPid,
-            startedAt: startedAt
+            ciadpiPid: state?["ciadpi_pid"] as? Int,
+            singboxPid: state?["singbox_pid"] as? Int,
+            startedAt: state?["started_at"] as? String,
+            tunInterface: state?["tun_interface"] as? String
         )
     }
 
-    public func installLaunchDaemonPlist(at path: String) {
-        let binPath = RoutunConfig.executableBinaryPath
-        let label = RoutunConfig.serviceLabel
-        let logPath = RoutunConfig.daemonLogFile
-        let errPath = RoutunConfig.daemonErrFile
+    public func installedPayloadVersion() -> String? {
+        guard RoutunConfig.isExecutableBinary(atPath: RoutunConfig.daemonBinaryPath) else { return nil }
+        let (code, output) = runCommand(RoutunConfig.daemonBinaryPath, ["version"])
+        guard code == 0 else { return nil }
+        return output.split(separator: " ").last.map(String.init)
+    }
 
-        let plistContent = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>Label</key>
-            <string>\(label)</string>
-            <key>ProgramArguments</key>
-            <array>
-                <string>\(binPath)</string>
-                <string>daemon</string>
-            </array>
-            <key>RunAtLoad</key>
-            <true/>
-            <key>KeepAlive</key>
-            <dict>
-                <key>SuccessfulExit</key>
-                <false/>
-            </dict>
-            <key>StandardOutPath</key>
-            <string>\(logPath)</string>
-            <key>StandardErrorPath</key>
-            <string>\(errPath)</string>
-            <key>ProcessType</key>
-            <string>Standard</string>
-        </dict>
-        </plist>
-        """
+    public func installAndStart() -> (success: Bool, message: String) {
+        let configuration = RoutunConfig.installationConfiguration()
+        guard let ciadpiSource = RoutunConfig.dependencySource(named: "ciadpi", configuredPath: configuration.ciadpiPath) else {
+            return (false, "ByeDPI (ciadpi) was not found. Install it first, then run sudo routun install.")
+        }
+        guard let singboxSource = RoutunConfig.dependencySource(named: "sing-box", configuredPath: configuration.singboxPath) else {
+            return (false, "sing-box was not found. Install it first, then run sudo routun install.")
+        }
+        guard let singboxTemplate = RoutunConfig.singboxTemplatePath(preferredPath: configuration.singboxConfig) else {
+            return (false, "No sing-box configuration template was found. Run this command from the source checkout or install via Homebrew.")
+        }
 
-        try? plistContent.write(toFile: path, atomically: true, encoding: .utf8)
-        chmod(path, 0o644)
+        do {
+            try prepareServiceDirectories()
+            try installFile(from: RoutunConfig.currentExecutablePath(), to: RoutunConfig.daemonBinaryPath, mode: 0o755)
+            try installFile(from: ciadpiSource, to: RoutunConfig.serviceCiadpiPath, mode: 0o755)
+            try installFile(from: singboxSource, to: RoutunConfig.serviceSingboxPath, mode: 0o755)
+
+            if !FileManager.default.fileExists(atPath: RoutunConfig.defaultSingboxConfigFile) {
+                try installFile(from: singboxTemplate, to: RoutunConfig.defaultSingboxConfigFile, mode: 0o644)
+            } else {
+                try secureRegularFile(at: RoutunConfig.defaultSingboxConfigFile, mode: 0o644)
+            }
+
+            var installedConfig = configuration
+            installedConfig.ciadpiPath = RoutunConfig.serviceCiadpiPath
+            installedConfig.singboxPath = RoutunConfig.serviceSingboxPath
+            installedConfig.singboxConfig = RoutunConfig.defaultSingboxConfigFile
+            try installedConfig.save()
+            try secureRegularFile(at: RoutunConfig.defaultConfigFile, mode: 0o644)
+
+            let (checkCode, checkOutput) = runCommand(
+                RoutunConfig.serviceSingboxPath,
+                ["check", "-c", RoutunConfig.defaultSingboxConfigFile]
+            )
+            guard checkCode == 0 else {
+                return (false, "sing-box rejected the copied configuration: \(checkOutput)")
+            }
+
+            try writeLaunchDaemonPlist()
+            removeLegacyServices()
+        } catch {
+            return (false, error.localizedDescription)
+        }
+
+        if getStatus().isLoaded {
+            let stopped = stop()
+            if !stopped.success { return stopped }
+        }
+        return start()
     }
 
     public func start() -> (success: Bool, message: String) {
-        let plistPath = RoutunConfig.launchDaemonPlist
-        if !FileManager.default.fileExists(atPath: plistPath) {
-            installLaunchDaemonPlist(at: plistPath)
+        guard FileManager.default.fileExists(atPath: RoutunConfig.launchDaemonPlist),
+              RoutunConfig.isExecutableBinary(atPath: RoutunConfig.daemonBinaryPath) else {
+            return (false, "The service payload is not installed. Run sudo routun install first.")
         }
 
-        // Bootstrap service into launchd system domain
-        let (bCode, bOut) = runCommand("/bin/launchctl", ["bootstrap", "system", plistPath])
-        let alreadyLoaded = bOut.contains("service already bootstrapped") || bOut.contains("Already loaded") || bCode == 5 || bCode == 37
-
-        if bCode != 0 && !alreadyLoaded {
-            let (lCode, lOut) = runCommand("/bin/launchctl", ["load", "-w", plistPath])
-            if lCode != 0 && !lOut.contains("Already loaded") {
-                return (false, "launchctl bootstrap failed: \(bOut.isEmpty ? lOut : bOut)")
-            }
+        if getStatus().isLoaded {
+            return (true, "Service is already loaded.")
         }
 
-        // Kickstart the service
-        _ = runCommand("/bin/launchctl", ["kickstart", "-k", "system/\(RoutunConfig.serviceLabel)"])
-
-        // Verify service loaded
-        for _ in 0..<20 {
-            let (pCode, _) = runCommand("/bin/launchctl", ["print", "system/\(RoutunConfig.serviceLabel)"])
-            if pCode == 0 {
-                return (true, "Service started via launchd.")
-            }
-            usleep(100_000) // 100ms
+        let (code, output) = runCommand("/bin/launchctl", ["bootstrap", "system", RoutunConfig.launchDaemonPlist])
+        guard code == 0 else {
+            return (false, "launchctl bootstrap failed: \(output)")
         }
-
-        return (false, "Service was not registered in launchd. Check 'routun logs' or 'routun doctor'.")
+        return (true, "Service registered with launchd.")
     }
 
     public func stop() -> (success: Bool, message: String) {
-        let candidateLabels = [
-            RoutunConfig.serviceLabel,
-            "sh.brew.routun",
-            "homebrew.mxcl.routun",
-            "com.routun.routund",
-            "com.routun.daemon"
-        ]
-        for label in candidateLabels {
-            _ = runCommand("/bin/launchctl", ["bootout", "system/\(label)"])
-        }
-        for plist in RoutunConfig.candidatePlistPaths {
-            _ = runCommand("/bin/launchctl", ["unload", plist])
+        guard getStatus().isLoaded else {
+            try? FileManager.default.removeItem(atPath: RoutunConfig.stateFile)
+            return (true, "Service is not loaded.")
         }
 
-        _ = terminateRecordedChildren()
-        _ = runCommand("/usr/bin/pkill", ["-TERM", "-f", "sing-box run -c"])
-        _ = runCommand("/usr/bin/pkill", ["-TERM", "-f", "ciadpi.*1080"])
-        _ = runCommand("/sbin/ifconfig", ["utun10", "down"])
+        let (code, output) = runCommand("/bin/launchctl", ["bootout", "system/\(RoutunConfig.serviceLabel)"])
+        guard code == 0 else {
+            return (false, "launchctl bootout failed: \(output)")
+        }
+        try? FileManager.default.removeItem(atPath: RoutunConfig.stateFile)
+        return (true, "Service stopped.")
+    }
 
-        try? FileManager.default.removeItem(atPath: RoutunConfig.pidFile)
+    public func restart() -> (success: Bool, message: String) {
+        guard getStatus().isLoaded else { return start() }
 
-        // Wait until service is completely unloaded from system domain
-        for _ in 0..<20 {
-            let (pCode, _) = runCommand("/bin/launchctl", ["print", "system/\(RoutunConfig.serviceLabel)"])
-            if pCode != 0 {
-                return (true, "Service stopped via launchd.")
+        let (code, output) = runCommand("/bin/launchctl", ["kickstart", "-k", "system/\(RoutunConfig.serviceLabel)"])
+        guard code == 0 else {
+            return (false, "launchctl kickstart failed: \(output)")
+        }
+        return (true, "Service restarted.")
+    }
+
+    public func uninstall() -> (success: Bool, message: String) {
+        let stopped = stop()
+        guard stopped.success else { return stopped }
+        removeLegacyServices()
+
+        do {
+            try removeIfPresent(RoutunConfig.launchDaemonPlist)
+            try removeIfPresent(RoutunConfig.serviceBinDir)
+            try removeIfPresent(RoutunConfig.appSupportDir)
+            if isRootOwnedRegularFile(at: "/usr/local/bin/routun") {
+                try removeIfPresent("/usr/local/bin/routun")
             }
-            usleep(100_000) // 100ms
+        } catch {
+            return (false, error.localizedDescription)
         }
-
-        return (true, "Service stopped via launchd.")
+        return (true, "Service payload and configuration removed. If installed with Homebrew, run brew uninstall routun separately.")
     }
 
     @discardableResult
     public func terminateRecordedChildren() -> Int {
-        let state = getStatus()
-        return [
-            (state.singboxPid, "sing-box"),
-            (state.ciadpiPid, "ciadpi")
-        ].reduce(into: 0) { count, child in
+        guard let state = readState() else { return 0 }
+        let children = [
+            (state["singbox_pid"] as? Int, RoutunConfig.serviceSingboxPath, "-TERM"),
+            (state["ciadpi_pid"] as? Int, RoutunConfig.serviceCiadpiPath, "-HUP")
+        ]
+
+        return children.reduce(into: 0) { count, child in
             guard let pid = child.0, pid > 0 else { return }
-            let (_, executable) = runCommand("/bin/ps", ["-p", String(pid), "-o", "comm="])
-            guard URL(fileURLWithPath: executable).lastPathComponent == child.1 else { return }
-            _ = runCommand("/bin/kill", ["-TERM", String(pid)])
+            let (code, command) = runCommand("/bin/ps", ["-p", String(pid), "-o", "command="])
+            guard code == 0, command.hasPrefix(child.1) else { return }
+            _ = runCommand("/bin/kill", [child.2, String(pid)])
             count += 1
         }
     }
 
-    public func restart() -> (success: Bool, message: String) {
-        _ = stop()
-        usleep(300_000) // 300ms buffer for kernel interface release
-        let startRes = start()
-        if !startRes.success {
-            return (false, "Failed to restart: \(startRes.message)")
-        }
-        return (true, "Service restarted successfully.")
-    }
-
     @discardableResult
     public func runCommand(_ executable: String, _ arguments: [String]) -> (code: Int32, output: String) {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: executable)
-        proc.arguments = arguments
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
 
         let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = pipe
+        process.standardOutput = pipe
+        process.standardError = pipe
 
         do {
-            try proc.run()
+            try process.run()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            proc.waitUntilExit()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            return (proc.terminationStatus, output.trimmingCharacters(in: .whitespacesAndNewlines))
+            process.waitUntilExit()
+            return (process.terminationStatus, String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
         } catch {
             return (-1, error.localizedDescription)
         }
     }
+
+    static func launchDaemonPlistData() throws -> Data {
+        let plist: [String: Any] = [
+            "Label": RoutunConfig.serviceLabel,
+            "ProgramArguments": [RoutunConfig.daemonBinaryPath, "daemon"],
+            "KeepAlive": ["SuccessfulExit": false],
+            "Umask": 0o022
+        ]
+        return try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+    }
+
+    private func prepareServiceDirectories() throws {
+        for path in ["/usr/local/libexec", RoutunConfig.serviceBinDir, RoutunConfig.appSupportDir, RoutunConfig.serviceConfigDir, RoutunConfig.serviceStateDir] {
+            try secureDirectory(at: path)
+        }
+    }
+
+    private func writeLaunchDaemonPlist() throws {
+        try ServiceManager.launchDaemonPlistData().write(to: URL(fileURLWithPath: RoutunConfig.launchDaemonPlist), options: .atomic)
+        try secureRegularFile(at: RoutunConfig.launchDaemonPlist, mode: 0o644)
+    }
+
+    private func installFile(from source: String, to destination: String, mode: mode_t) throws {
+        let resolvedSource = URL(fileURLWithPath: source).resolvingSymlinksInPath().path
+        guard isRegularFile(at: resolvedSource) else {
+            throw ServiceError("Expected a regular file at \(source).")
+        }
+
+        let temporary = (destination as NSString).deletingLastPathComponent + "/.\((destination as NSString).lastPathComponent).new"
+        try removeIfPresent(temporary)
+        try FileManager.default.copyItem(atPath: resolvedSource, toPath: temporary)
+        do {
+            try secureRegularFile(at: temporary, mode: mode)
+            guard rename(temporary, destination) == 0 else {
+                throw ServiceError("Could not activate \(destination): \(String(cString: strerror(errno))).")
+            }
+        } catch {
+            try? removeIfPresent(temporary)
+            throw error
+        }
+    }
+
+    private func secureDirectory(at path: String) throws {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) {
+            guard isDirectory.boolValue, isDirectoryPath(path) else {
+                throw ServiceError("Refusing to use non-directory path \(path).")
+            }
+        } else {
+            try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        }
+        guard chown(path, 0, 0) == 0, chmod(path, 0o755) == 0 else {
+            throw ServiceError("Could not secure \(path): \(String(cString: strerror(errno))).")
+        }
+    }
+
+    private func secureRegularFile(at path: String, mode: mode_t) throws {
+        guard isRegularFile(at: path) else {
+            throw ServiceError("Refusing to use non-regular file \(path).")
+        }
+        guard chown(path, 0, 0) == 0, chmod(path, mode) == 0 else {
+            throw ServiceError("Could not secure \(path): \(String(cString: strerror(errno))).")
+        }
+    }
+
+    private func isDirectoryPath(_ path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR
+    }
+
+    private func isRegularFile(at path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFREG
+    }
+
+    private func isRootOwnedRegularFile(at path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFREG && info.st_uid == 0
+    }
+
+    private func readState() -> [String: Any]? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: RoutunConfig.stateFile)) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private func removeLegacyServices() {
+        for label in legacyLabels {
+            _ = runCommand("/bin/launchctl", ["bootout", "system/\(label)"])
+            if let uid = legacyGUIUserID() {
+                _ = runCommand("/bin/launchctl", ["bootout", "gui/\(uid)/\(label)"])
+            }
+        }
+        for plist in legacyPlists {
+            try? removeIfPresent(plist)
+        }
+    }
+
+    private func legacyGUIUserID() -> uid_t? {
+        if let value = ProcessInfo.processInfo.environment["SUDO_UID"], let uid = uid_t(value) {
+            return uid
+        }
+
+        var info = stat()
+        guard stat("/dev/console", &info) == 0, info.st_uid != 0 else { return nil }
+        return info.st_uid
+    }
+
+    private func removeIfPresent(_ path: String) throws {
+        var info = stat()
+        if lstat(path, &info) == 0 {
+            try FileManager.default.removeItem(atPath: path)
+        }
+    }
+}
+
+private struct ServiceError: LocalizedError {
+    let message: String
+
+    init(_ message: String) {
+        self.message = message
+    }
+
+    var errorDescription: String? { message }
 }
