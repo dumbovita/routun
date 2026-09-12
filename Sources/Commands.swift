@@ -314,6 +314,83 @@ public final class RoutunCommands {
             exit(1)
         }
 
+        let state = ServiceManager.shared.getStatus()
+        let isRoot = (geteuid() == 0)
+
+        // If the service is running but we are not root, escalate via sudo
+        // so that the service can be paused during testing and restarted cleanly with the new profile.
+        if state.isRunning && !isRoot {
+            print("\(yellow)Notice:\(reset) The routun DPI service is currently active.")
+            print("To eliminate DPI routing interference during optimization, the service will be temporarily paused.")
+            print("Re-running with sudo...\n")
+
+            let execPath = Bundle.main.executablePath ?? CommandLine.arguments[0]
+            var args = ["sudo", execPath]
+            if CommandLine.arguments.count > 1 {
+                args.append(contentsOf: CommandLine.arguments.dropFirst())
+            }
+            let cArgs = args.map { strdup($0) } + [nil]
+            execvp("/usr/bin/sudo", cArgs)
+
+            // If execvp returns, it failed to elevate
+            print("\(red)Error:\(reset) Privilege escalation failed. Please run:")
+            print("  \(bold)sudo routun optimize\(reset)")
+            exit(1)
+        }
+
+        let wasRunning = state.isRunning
+        var didStopService = false
+
+        if wasRunning && isRoot {
+            print("\(yellow)Temporarily pausing routun service to eliminate DPI routing interference...\(reset)")
+            let stopRes = ServiceManager.shared.stop()
+            if stopRes.success {
+                didStopService = true
+                usleep(300_000) // 300ms buffer for kernel to release utun interface and reset routing table
+            }
+        }
+
+        // Setup signal handlers to guarantee service restoration on Ctrl+C (SIGINT) or kill (SIGTERM)
+        var restored = false
+        let restoreService = { (reason: String) in
+            guard didStopService && !restored else { return }
+            restored = true
+            print("\n\(yellow)\(reason) Restoring routun service...\(reset)")
+            let res = ServiceManager.shared.start()
+            if res.success {
+                print("\(green)routun service restored successfully.\(reset)")
+            } else {
+                print("\(red)Failed to restore service: \(res.message)\(reset)")
+            }
+        }
+
+        signal(SIGINT, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
+
+        let sigQueue = DispatchQueue(label: "routun.signal.handler")
+        let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: sigQueue)
+        sigintSource.setEventHandler {
+            restoreService("Optimization interrupted by user.")
+            _ = ServiceManager.shared.runCommand("/usr/bin/pkill", ["-9", "-f", "ciadpi.*18080"])
+            exit(130)
+        }
+        sigintSource.resume()
+
+        let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: sigQueue)
+        sigtermSource.setEventHandler {
+            restoreService("Optimization terminated.")
+            _ = ServiceManager.shared.runCommand("/usr/bin/pkill", ["-9", "-f", "ciadpi.*18080"])
+            exit(143)
+        }
+        sigtermSource.resume()
+
+        defer {
+            sigintSource.cancel()
+            sigtermSource.cancel()
+            signal(SIGINT, SIG_DFL)
+            signal(SIGTERM, SIG_DFL)
+        }
+
         let parsedCustom = StrategyTarget.parseList(from: customTargets)
         let optimizer = StrategyOptimizer(
             ciadpiPath: config.ciadpiPath,
@@ -323,6 +400,11 @@ public final class RoutunCommands {
         )
         guard let selected = optimizer.run() else {
             print("\(yellow)Optimization completed without selecting a new profile. Preserving existing configuration.\(reset)")
+            if didStopService && !restored {
+                restored = true
+                print("\(yellow)Restoring routun service with existing configuration...\(reset)")
+                _ = ServiceManager.shared.start()
+            }
             return
         }
 
@@ -332,10 +414,17 @@ public final class RoutunCommands {
             print("\(yellow)Warning: Could not save profile to \(RoutunConfig.defaultConfigFile). Run with sudo to persist.\(reset)")
         }
 
-        // If the service is currently running, offer to reload/restart
-        let state = ServiceManager.shared.getStatus()
-        if state.isRunning {
-            if geteuid() == 0 {
+        if didStopService && !restored {
+            restored = true
+            print("\n\(green)Starting routun service with newly selected profile '\(selected.id)'...\(reset)")
+            let startRes = ServiceManager.shared.start()
+            if startRes.success {
+                print("\(green)routun service is running with profile '\(selected.id)'.\(reset)")
+            } else {
+                print("\(red)Failed to restart service: \(startRes.message)\(reset)")
+            }
+        } else if wasRunning {
+            if isRoot {
                 print("\nRestarting service to apply '\(selected.id)'...")
                 restart()
             } else {

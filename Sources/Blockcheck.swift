@@ -90,43 +90,43 @@ public struct StrategyTarget: Hashable {
 }
 
 public enum StrategyTargets {
-    /// Curated representative dataset combining major global platforms and daily-use services
+    /// Curated representative dataset combining major global platforms, restricted services, and infrastructure
     public static let all: [StrategyTarget] = [
         // Reference sanity check (unblocked connectivity baseline)
         StrategyTarget(name: "Apple", host: "apple.com", port: 443, path: "/", isReference: true),
 
-        // Global platforms subject to censorship or DPI restrictions
+        // Global platforms subject to censorship, DPI inspection, or judicial restrictions
         StrategyTarget(name: "Discord (Web/API)", host: "discord.com", port: 443, path: "/"),
         StrategyTarget(name: "Discord (Gateway)", host: "gateway.discord.gg", port: 443, path: "/"),
         StrategyTarget(name: "Roblox", host: "roblox.com", port: 443, path: "/"),
         StrategyTarget(name: "Wattpad", host: "wattpad.com", port: 443, path: "/"),
         StrategyTarget(name: "Pastebin", host: "pastebin.com", port: 443, path: "/"),
-        StrategyTarget(name: "X / Twitter", host: "x.com", port: 443, path: "/"),
-        StrategyTarget(name: "Instagram", host: "instagram.com", port: 443, path: "/"),
-        StrategyTarget(name: "Facebook", host: "facebook.com", port: 443, path: "/"),
-        StrategyTarget(name: "YouTube", host: "youtube.com", port: 443, path: "/"),
-        StrategyTarget(name: "Google Video CDN", host: "redirector.googlevideo.com", port: 443, path: "/"),
-        StrategyTarget(name: "RuTracker", host: "rutracker.org", port: 443, path: "/"),
+        StrategyTarget(name: "Internet Archive", host: "archive.org", port: 443, path: "/"),
+        StrategyTarget(name: "Deutsche Welle", host: "dw.com", port: 443, path: "/"),
         StrategyTarget(name: "Tor Project", host: "torproject.org", port: 443, path: "/"),
-        StrategyTarget(name: "LinkedIn", host: "linkedin.com", port: 443, path: "/"),
-        StrategyTarget(name: "Medium", host: "medium.com", port: 443, path: "/"),
+        StrategyTarget(name: "RuTracker", host: "rutracker.org", port: 443, path: "/"),
+        StrategyTarget(name: "Chess.com", host: "chess.com", port: 443, path: "/"),
+        StrategyTarget(name: "Signal", host: "signal.org", port: 443, path: "/"),
 
-        // Frequently used daily services & social media
-        StrategyTarget(name: "Google", host: "google.com", port: 443, path: "/"),
-        StrategyTarget(name: "Reddit", host: "reddit.com", port: 443, path: "/"),
-        StrategyTarget(name: "Wikipedia", host: "wikipedia.org", port: 443, path: "/"),
-        StrategyTarget(name: "Spotify", host: "spotify.com", port: 443, path: "/"),
-        StrategyTarget(name: "Twitch", host: "twitch.tv", port: 443, path: "/"),
+        // Infrastructure & Encrypted DNS (DoH)
+        StrategyTarget(name: "Cloudflare DoH", host: "cloudflare-dns.com", port: 443, path: "/dns-query"),
         StrategyTarget(name: "Cloudflare", host: "cloudflare.com", port: 443, path: "/"),
 
-        // Microsoft & Windows consumer / authentication services
-        StrategyTarget(name: "Microsoft Login", host: "login.microsoftonline.com", port: 443, path: "/"),
-        StrategyTarget(name: "Microsoft Live", host: "login.live.com", port: 443, path: "/"),
-        StrategyTarget(name: "Xbox Live Auth", host: "user.auth.xboxlive.com", port: 443, path: "/"),
+        // Major international social media & streaming services
+        StrategyTarget(name: "Instagram", host: "instagram.com", port: 443, path: "/"),
+        StrategyTarget(name: "X / Twitter", host: "x.com", port: 443, path: "/"),
+        StrategyTarget(name: "YouTube", host: "youtube.com", port: 443, path: "/"),
+        StrategyTarget(name: "Google Video CDN", host: "redirector.googlevideo.com", port: 443, path: "/"),
+        StrategyTarget(name: "Twitch", host: "twitch.tv", port: 443, path: "/"),
+        StrategyTarget(name: "Spotify", host: "spotify.com", port: 443, path: "/"),
+        StrategyTarget(name: "Medium", host: "medium.com", port: 443, path: "/"),
 
-        // Sensitive education & government portals (strict TLS/WAF compatibility verification)
-        StrategyTarget(name: "Anadolu University", host: "anadolu.edu.tr", port: 443, path: "/"),
-        StrategyTarget(name: "Saglik Bakanligi", host: "saglik.gov.tr", port: 443, path: "/")
+        // Core daily reference & authentication endpoints
+        StrategyTarget(name: "Google", host: "google.com", port: 443, path: "/"),
+        StrategyTarget(name: "Wikipedia", host: "wikipedia.org", port: 443, path: "/"),
+        StrategyTarget(name: "Reddit", host: "reddit.com", port: 443, path: "/"),
+        StrategyTarget(name: "Microsoft Login", host: "login.microsoftonline.com", port: 443, path: "/"),
+        StrategyTarget(name: "Xbox Live Auth", host: "user.auth.xboxlive.com", port: 443, path: "/")
     ]
 }
 
@@ -441,7 +441,19 @@ public final class StrategyOptimizer {
                 }
             }
         }
-        return nil
+        let (code, out) = ServiceManager.shared.runCommand("/sbin/route", ["-n", "get", "default"])
+        if code == 0 {
+            for line in out.components(separatedBy: .newlines) {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("interface: ") {
+                    let iface = trimmed.replacingOccurrences(of: "interface: ", with: "")
+                    if iface.hasPrefix("en") {
+                        return iface
+                    }
+                }
+            }
+        }
+        return "en0"
     }
 
     /// Perform a single HTTP/TLS probe via /usr/bin/curl
@@ -454,8 +466,8 @@ public final class StrategyOptimizer {
             "-s",
             "-o", "/dev/null",
             "-w", "%{http_code} %{time_total}",
-            "--connect-timeout", "2.5",
-            "--max-time", String(format: "%.1f", max(timeout, 3.0)),
+            "--connect-timeout", "1.5",
+            "--max-time", String(format: "%.1f", max(timeout, 2.0)),
             "-A", "Mozilla/5.0 (Macintosh; Apple Mac OS X) routun-blockcheck/2.0"
         ]
 
@@ -520,12 +532,15 @@ public final class StrategyOptimizer {
         }
     }
 
-    public func probe(target: StrategyTarget, socksPort: Int?, timeout: Double = 1.8) -> ProbeResult {
+    public func probe(target: StrategyTarget, socksPort: Int?, timeout: Double = 1.5, attempts: Int = 2) -> ProbeResult {
         let runProbe = probeOverride ?? { [self] target, socksPort, timeout in
             probeSingle(target: target, socksPort: socksPort, timeout: timeout)
         }
         let first = runProbe(target, socksPort, timeout)
-        usleep(40_000) // 40ms pause before retry
+        if attempts <= 1 {
+            return first
+        }
+        usleep(30_000) // 30ms pause before retry
         let second = runProbe(target, socksPort, timeout)
         let successfulAttempts = first.successfulAttempts + second.successfulAttempts
         let selected = second.isReachable ? second : first.isReachable ? first : second
@@ -543,12 +558,12 @@ public final class StrategyOptimizer {
         )
     }
 
-    public func probeConcurrently(targets: [StrategyTarget], socksPort: Int?, timeout: Double = 1.8) -> [ProbeResult] {
+    public func probeConcurrently(targets: [StrategyTarget], socksPort: Int?, timeout: Double = 1.5, attempts: Int = 2) -> [ProbeResult] {
         var results = [ProbeResult?](repeating: nil, count: targets.count)
         let lock = NSLock()
 
         DispatchQueue.concurrentPerform(iterations: targets.count) { i in
-            let res = self.probe(target: targets[i], socksPort: socksPort, timeout: timeout)
+            let res = self.probe(target: targets[i], socksPort: socksPort, timeout: timeout, attempts: attempts)
             lock.lock()
             results[i] = res
             lock.unlock()
@@ -579,13 +594,13 @@ public final class StrategyOptimizer {
             return nil
         }
 
-        // Wait up to 800ms for this specific process to start listening
-        for _ in 0..<8 {
+        // Wait up to 300ms for this specific process to start listening (checking every 15ms)
+        for _ in 0..<20 {
             guard proc.isRunning else { return nil }
-            if NetUtils.isPortOpen(host: "127.0.0.1", port: port, timeout: 0.1) {
+            if NetUtils.isPortOpen(host: "127.0.0.1", port: port, timeout: 0.015) {
                 return proc
             }
-            usleep(100_000)
+            usleep(15_000)
         }
 
         proc.terminate()
@@ -667,10 +682,21 @@ public final class StrategyOptimizer {
             return StrategyProfiles.defaultProfile
         }
 
-        // 3. Single profile-evaluation cycle across the complete target list
+        // 3. Build focused target list for fast matrix screening
+        var focusTargets = blockedTargets
+        for ct in customTargets {
+            if !focusTargets.contains(where: { $0.host == ct.host }) {
+                focusTargets.append(ct)
+            }
+        }
+        if let ref = StrategyTargets.all.first(where: { $0.isReference }),
+           !focusTargets.contains(where: { $0.host == ref.host }) {
+            focusTargets.append(ref)
+        }
+
         let candidateProfiles = quick ? StrategyProfiles.canonical : StrategyProfiles.all
         let modeLabel = quick ? "canonical profiles" : "comprehensive combinations matrix"
-        emit("Testing \(candidateProfiles.count) \(modeLabel):")
+        emit("Testing \(candidateProfiles.count) \(modeLabel) (Fast Screening):")
 
         let blockedSet = Set(blockedTargets.map { $0.host })
         let customSet = Set(customTargets.map { $0.host })
@@ -686,7 +712,7 @@ public final class StrategyOptimizer {
                 terminateProcess(testProc)
             }
 
-            let probeResults = probeConcurrently(targets: evalTargets, socksPort: testPort, timeout: 1.8)
+            let probeResults = probeConcurrently(targets: focusTargets, socksPort: testPort, timeout: 1.5, attempts: 1)
             var unlockedCount = 0
             var customPassed = 0
             var totalReachable = 0
@@ -694,7 +720,7 @@ public final class StrategyOptimizer {
             var timeouts = 0
 
             for res in probeResults {
-                if res.isReliable {
+                if res.isReachable {
                     totalReachable += 1
                     totalLatency += res.latencyMs
                     if blockedSet.contains(res.target.host) {
@@ -703,7 +729,7 @@ public final class StrategyOptimizer {
                     if customSet.contains(res.target.host) {
                         customPassed += 1
                     }
-                } else if !res.isReachable && res.exitCode == 28 {
+                } else if res.exitCode == 28 {
                     timeouts += 1
                 }
             }
@@ -721,7 +747,7 @@ public final class StrategyOptimizer {
                 profile: profile,
                 unlockedCount: unlockedCount,
                 reachableCount: totalReachable,
-                totalTargets: evalTargets.count,
+                totalTargets: focusTargets.count,
                 averageLatencyMs: avgLatency,
                 timeouts: timeouts,
                 customTargetsPassed: customPassed,
@@ -741,8 +767,8 @@ public final class StrategyOptimizer {
             }
             let detailStr = statusDetails.isEmpty ? "" : " (\(statusDetails.joined(separator: ", ")))"
             let statusSuffix = (totalReachable > 0)
-                ? "\(totalReachable)/\(evalTargets.count) reliably reachable\(detailStr) (\(avgLatency)ms)"
-                : "\u{001B}[31m0/\(evalTargets.count) reliably reachable\u{001B}[0m"
+                ? "\(totalReachable)/\(focusTargets.count) reachable\(detailStr) (\(avgLatency)ms)"
+                : "\u{001B}[31m0/\(focusTargets.count) reachable (blocked)\u{001B}[0m"
             let idxPadded = String(format: "%2d", index + 1)
             emit("  [\(idxPadded)/\(candidateProfiles.count)] \(paddedId) \(statusSuffix)")
         }
@@ -777,7 +803,72 @@ public final class StrategyOptimizer {
             return StrategyProfiles.defaultProfile
         }
 
-        let winner = workingContenders[0]
+        // Stage 2: Thorough stability verification of top contenders across all targets
+        let topContenders = Array(workingContenders.prefix(5))
+        emit("\nVerifying \(topContenders.count) top contender(s) across all \(evalTargets.count) targets for stability & compatibility:")
+
+        var verifiedScores = [Phase1Score]()
+        for (idx, contender) in topContenders.enumerated() {
+            guard let testProc = spawnTestCiadpi(profile: contender.profile, port: testPort) else { continue }
+            defer { terminateProcess(testProc) }
+
+            let fullResults = probeConcurrently(targets: evalTargets, socksPort: testPort, timeout: 1.8, attempts: 2)
+            var totalReachable = 0
+            var unlockedCount = 0
+            var customPassed = 0
+            var totalLatency = 0
+            var timeouts = 0
+
+            for res in fullResults {
+                if res.isReliable {
+                    totalReachable += 1
+                    totalLatency += res.latencyMs
+                    if blockedSet.contains(res.target.host) { unlockedCount += 1 }
+                    if customSet.contains(res.target.host) { customPassed += 1 }
+                } else if !res.isReachable && res.exitCode == 28 {
+                    timeouts += 1
+                }
+            }
+
+            let avgLat = totalReachable > 0 ? (totalLatency / totalReachable) : 9999
+            let score = Phase1Score(
+                profile: contender.profile,
+                unlockedCount: unlockedCount,
+                reachableCount: totalReachable,
+                totalTargets: evalTargets.count,
+                averageLatencyMs: avgLat,
+                timeouts: timeouts,
+                customTargetsPassed: customPassed,
+                totalCustomTargets: customTargets.count
+            )
+            verifiedScores.append(score)
+
+            let paddedId = contender.profile.id.padding(toLength: 28, withPad: " ", startingAt: 0)
+            let unlockColor = (unlockedCount > 0) ? "\u{001B}[32m" : "\u{001B}[33m"
+            let statusSuffix = "\(totalReachable)/\(evalTargets.count) verified (\(unlockColor)+\(unlockedCount) unlocked\u{001B}[0m) (\(avgLat)ms)"
+            emit("  [\(idx + 1)/\(topContenders.count)] \(paddedId) \(statusSuffix)")
+        }
+
+        let ranked = verifiedScores.sorted { a, b in
+            if a.customTargetsPassed != b.customTargetsPassed {
+                return a.customTargetsPassed > b.customTargetsPassed
+            }
+            if a.unlockedCount != b.unlockedCount {
+                return a.unlockedCount > b.unlockedCount
+            }
+            if a.reachableCount != b.reachableCount {
+                return a.reachableCount > b.reachableCount
+            }
+            if a.timeouts != b.timeouts {
+                return a.timeouts < b.timeouts
+            }
+            if a.averageLatencyMs != b.averageLatencyMs {
+                return a.averageLatencyMs < b.averageLatencyMs
+            }
+            return a.profile.complexity < b.profile.complexity
+        }
+
+        let winner = ranked.first ?? workingContenders[0]
 
         emit("\n\u{001B}[32m✓ Selected:\u{001B}[0m \u{001B}[1m\(winner.profile.id)\u{001B}[0m (\(winner.profile.name))")
         emit("  Family:      \(winner.profile.family)")

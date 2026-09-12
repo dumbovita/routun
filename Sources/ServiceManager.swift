@@ -166,6 +166,9 @@ public final class ServiceManager {
         }
 
         _ = terminateRecordedChildren()
+        _ = runCommand("/usr/bin/pkill", ["-TERM", "-f", "sing-box run -c"])
+        _ = runCommand("/usr/bin/pkill", ["-TERM", "-f", "ciadpi.*1080"])
+        _ = runCommand("/sbin/ifconfig", ["utun10", "down"])
 
         try? FileManager.default.removeItem(atPath: RoutunConfig.pidFile)
 
