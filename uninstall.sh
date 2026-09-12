@@ -53,8 +53,14 @@ killall -TERM ciadpi 2>/dev/null || true
 
 # 3. Remove service files, configurations, and logs
 echo "[2/2] Removing service files, configurations, and logs..."
+ifconfig utun10 down 2>/dev/null || true
 rm -rf "/Library/Application Support/routun"
 rm -rf "/var/log/routun"
+rm -rf "/opt/homebrew/var/log/routun"
+rm -rf "/opt/homebrew/etc/routun"
+rm -rf "/opt/homebrew/Cellar/routun"
+rm -rf "/opt/homebrew/opt/routun"
+rm -f "/opt/homebrew/bin/routun"
 rm -f "/var/run/routun.pid"
 rm -f "/usr/local/bin/routun"
 
