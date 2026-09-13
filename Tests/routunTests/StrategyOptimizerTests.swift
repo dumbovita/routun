@@ -28,14 +28,40 @@ struct StrategyOptimizerTests {
         ])
     }
 
-    @Test("Evaluation targets contains custom target first and curated hosts")
+    @Test("Evaluation targets contains custom target first and targets from active service groups")
     func evaluationTargetsContainsEveryCuratedHost() {
         let custom = StrategyTarget(name: "GitHub", host: "github.com")
         let targets = StrategyOptimizer.evaluationTargets(customTargets: [custom])
-        let curatedHosts = Set(StrategyTargets.all.filter { !$0.isReference }.map(\.host))
+        let targetHosts = Set(targets.map(\.host))
 
         #expect(targets.first?.host == custom.host)
-        #expect(curatedHosts.isSubset(of: Set(targets.map(\.host))))
+        #expect(targetHosts.contains("discord.com"))
+        #expect(targetHosts.contains("roblox.com"))
+        #expect(targetHosts.contains("cloudflare.com"))
+        #expect(targetHosts.contains("archive.org"))
+        #expect(targetHosts.contains("apple.com"))
+    }
+
+    @Test("Evaluation targets includes only active service groups")
+    func evaluationTargetsRespectsActiveServiceGroups() {
+        let policyOnlyTurkiye = RoutePolicy(
+            groupPreferences: [
+                "turkiye": true,
+                "general": false,
+                "social": false,
+                "youtube": false,
+                "telegram": false,
+                "cloudflare": false
+            ]
+        )
+        let targets = StrategyOptimizer.evaluationTargets(policy: policyOnlyTurkiye)
+        let hosts = Set(targets.map(\.host))
+
+        #expect(hosts.contains("roblox.com"))
+        #expect(hosts.contains("discord.com"))
+        #expect(!hosts.contains("instagram.com"))
+        #expect(!hosts.contains("youtube.com"))
+        #expect(!hosts.contains("archive.org"))
     }
 
     @Test("Curated strategy targets are proper and valid")

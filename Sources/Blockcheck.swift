@@ -151,7 +151,7 @@ public struct StrategyProfile: Equatable {
 
     /// Complete ByeDPI command line arguments with binding, listen port, and adaptive evasion
     public func fullArgs(host: String = "127.0.0.1", port: Int = 1080, maxConn: Int = 512) -> [String] {
-        return ["-i", host, "-p", String(port), "-A", "torst,ssl_err"] + args + ["-c", String(maxConn)]
+        return ["-i", host, "-p", String(port)] + args + ["-c", String(maxConn)]
     }
 }
 
@@ -392,6 +392,7 @@ public final class StrategyOptimizer {
     public let verbose: Bool
     public let quick: Bool
     public let customTargets: [StrategyTarget]
+    public let policy: RoutePolicy
 
     private let physicalInterface: String?
     private let probeOverride: ((StrategyTarget, Int?, Double) -> ProbeResult)?
@@ -440,6 +441,7 @@ public final class StrategyOptimizer {
         verbose: Bool = false,
         quick: Bool = false,
         customTargets: [StrategyTarget] = [],
+        policy: RoutePolicy? = nil,
         probeOverride: ((StrategyTarget, Int?, Double) -> ProbeResult)? = nil
     ) {
         let config = RoutunConfig.load()
@@ -448,17 +450,74 @@ public final class StrategyOptimizer {
         self.verbose = verbose
         self.quick = quick
         self.customTargets = customTargets
+        self.policy = policy ?? config.routePolicy
         self.physicalInterface = StrategyOptimizer.detectPhysicalInterface()
         self.probeOverride = probeOverride
     }
 
-    public static func evaluationTargets(customTargets: [StrategyTarget]) -> [StrategyTarget] {
+    public static func evaluationTargets(
+        customTargets: [StrategyTarget] = [],
+        policy: RoutePolicy? = nil
+    ) -> [StrategyTarget] {
         var seenHosts = Set<String>()
         var targets = [StrategyTarget]()
 
-        for target in customTargets + StrategyTargets.all where !target.isReference {
+        // 1. Explicit custom targets passed directly
+        for target in customTargets {
             if seenHosts.insert(target.host).inserted {
                 targets.append(target)
+            }
+        }
+
+        // 2. Derive targets from user's active/enabled groups in policy
+        let effectivePolicy = policy ?? RoutunConfig.load().routePolicy
+        let (bypassedSuffixes, excludedSuffixes) = effectivePolicy.resolveTargets()
+        let excludedSet = Set(excludedSuffixes)
+        let bypassedSet = Set(bypassedSuffixes)
+
+        func isHostBypassed(_ host: String) -> Bool {
+            if excludedSet.contains(host) { return false }
+            if bypassedSet.contains(host) { return true }
+            for suffix in bypassedSet {
+                if host.hasSuffix("." + suffix) || host == suffix {
+                    return true
+                }
+            }
+            return false
+        }
+
+        // Include curated targets that match active groups
+        for target in StrategyTargets.all where !target.isReference {
+            if isHostBypassed(target.host) {
+                if seenHosts.insert(target.host).inserted {
+                    targets.append(target)
+                }
+            }
+        }
+
+        // Include any remaining group domains or custom includes
+        for suffix in bypassedSuffixes where !excludedSet.contains(suffix) {
+            if !seenHosts.contains(suffix) {
+                if seenHosts.insert(suffix).inserted {
+                    targets.append(StrategyTarget(name: suffix, host: suffix, port: 443, path: "/"))
+                }
+            }
+        }
+
+        // 3. Include essential reference targets for zero regression checks
+        let baselineReferenceHosts = ["apple.com", "google.com", "wikipedia.org"]
+        for target in StrategyTargets.all where baselineReferenceHosts.contains(target.host) {
+            if seenHosts.insert(target.host).inserted {
+                targets.append(target)
+            }
+        }
+
+        // Fallback: If no targets are active, include StrategyTargets.all
+        if targets.isEmpty {
+            for target in StrategyTargets.all where !target.isReference {
+                if seenHosts.insert(target.host).inserted {
+                    targets.append(target)
+                }
             }
         }
 
@@ -694,7 +753,7 @@ public final class StrategyOptimizer {
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: ciadpiPath)
-        proc.arguments = ["-i", "127.0.0.1", "-p", String(port), "-A", "torst,ssl_err"] + sanitizedArgs + ["-c", "128"]
+        proc.arguments = ["-i", "127.0.0.1", "-p", String(port)] + sanitizedArgs + ["-c", "128"]
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice
 
@@ -929,7 +988,12 @@ public final class StrategyOptimizer {
         }
 
         // 2. Establish Baseline (Direct physical connection without ByeDPI)
-        let evalTargets = StrategyOptimizer.evaluationTargets(customTargets: customTargets)
+        let evalTargets = StrategyOptimizer.evaluationTargets(customTargets: customTargets, policy: self.policy)
+
+        let activeGroups = ServiceGroupCatalog.builtInGroups.filter { self.policy.isGroupEnabled($0) }.map(\.id)
+        if !activeGroups.isEmpty {
+            emit("Active service groups evaluated (\(activeGroups.count)): \(activeGroups.joined(separator: ", "))\n")
+        }
 
         if !customTargets.isEmpty {
             emit("Custom targets added (\(customTargets.count)): \(customTargets.map { $0.host }.joined(separator: ", "))\n")
@@ -969,13 +1033,9 @@ public final class StrategyOptimizer {
         let blockedSet = Set(blockedTargets.map { $0.host })
         let customSet = Set(customTargets.map { $0.host })
 
-        // Worker allocation: 2 concurrent workers on isolated ports for optimal speed and zero port conflicts
+        // Worker allocation: 2 concurrent workers on dynamic isolated ports for optimal speed and zero port conflicts
         let workerCount = min(2, candidateProfiles.count)
-        var workerPorts = [testPort]
-        if workerCount > 1 {
-            let p2 = StrategyOptimizer.findFreePort(excluding: Set(workerPorts))
-            workerPorts.append(p2)
-        }
+        var usedPorts = Set<Int>([testPort])
 
         var phase1Scores = [Phase1Score?](repeating: nil, count: candidateProfiles.count)
         var phase1Logs = [String?](repeating: nil, count: candidateProfiles.count)
@@ -995,8 +1055,7 @@ public final class StrategyOptimizer {
         }
 
         let group = DispatchGroup()
-        for workerId in 0..<workerCount {
-            let port = workerPorts[workerId]
+        for _ in 0..<workerCount {
             group.enter()
             DispatchQueue.global().async {
                 defer { group.leave() }
@@ -1008,6 +1067,8 @@ public final class StrategyOptimizer {
                     }
                     let index = nextIndex
                     nextIndex += 1
+                    let port = StrategyOptimizer.findFreePort(excluding: usedPorts)
+                    usedPorts.insert(port)
                     queueLock.unlock()
 
                     let profile = candidateProfiles[index]
@@ -1078,16 +1139,18 @@ public final class StrategyOptimizer {
 
         var verifiedScores = [Phase1Score]()
         for (idx, contender) in topContenders.enumerated() {
-            guard let testProc = spawnTestCiadpi(profile: contender.profile, port: testPort) else { continue }
-            setActiveTestProcess(testProc, for: testPort)
+            let stage2Port = StrategyOptimizer.findFreePort(excluding: usedPorts)
+            usedPorts.insert(stage2Port)
+            guard let testProc = spawnTestCiadpi(profile: contender.profile, port: stage2Port) else { continue }
+            setActiveTestProcess(testProc, for: stage2Port)
 
-            var fullResults = probeConcurrently(targets: evalTargets, socksPort: testPort, timeout: 2.5, attempts: 2)
+            var fullResults = probeConcurrently(targets: evalTargets, socksPort: stage2Port, timeout: 2.5, attempts: 2)
 
             // Tiebreaker probe if a baseline-reachable target succeeded 1/2 attempts
             for i in 0..<fullResults.count {
                 let res = fullResults[i]
                 if baselineReachableHosts.contains(res.target.host) && !res.isReliable && res.successfulAttempts > 0 {
-                    let tiebreaker = self.probe(target: res.target, socksPort: testPort, timeout: 3.0, attempts: 1)
+                    let tiebreaker = self.probe(target: res.target, socksPort: stage2Port, timeout: 3.0, attempts: 1)
                     if tiebreaker.isReachable {
                         fullResults[i] = ProbeResult(
                             target: res.target,
@@ -1104,8 +1167,8 @@ public final class StrategyOptimizer {
                 }
             }
 
-            terminateProcess(testProc, port: testPort)
-            setActiveTestProcess(nil, for: testPort)
+            terminateProcess(testProc, port: stage2Port)
+            setActiveTestProcess(nil, for: stage2Port)
             let candidateReachableHosts = Set(fullResults.filter { $0.isReliable }.map { $0.target.host })
             var totalReachable = 0
             var unlockedCount = 0

@@ -322,7 +322,8 @@ public final class RoutunCommands {
             ciadpiPath: config.ciadpiPath,
             verbose: verbose,
             quick: quick,
-            customTargets: parsedCustom
+            customTargets: parsedCustom,
+            policy: config.routePolicy
         )
 
         signal(SIGINT, SIG_IGN)

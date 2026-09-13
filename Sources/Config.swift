@@ -228,7 +228,7 @@ public struct RoutunConfig: Codable, Equatable {
         RoutunConfig(
             ciadpiPath: findBinary(named: "ciadpi", searchPaths: ["/opt/homebrew/bin", "/usr/local/bin"]) ?? "",
             singboxPath: findBinary(named: "sing-box", searchPaths: ["/opt/homebrew/bin", "/usr/local/bin"]) ?? "",
-            ciadpiArgs: ["-i", "127.0.0.1", "-p", "1080", "-A", "torst,ssl_err", "-s", "1", "-d", "3+s", "-r", "1+s", "-c", "512"],
+            ciadpiArgs: ["-i", "127.0.0.1", "-p", "1080", "-s", "1", "-d", "3+s", "-r", "1+s", "-c", "512"],
             socksHost: "127.0.0.1",
             socksPort: 1080,
             singboxConfig: defaultSingboxConfigFile,
