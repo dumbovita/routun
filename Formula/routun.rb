@@ -1,8 +1,8 @@
 class Routun < Formula
   desc "Transparent TUN-based network routing for macOS"
   homepage "https://github.com/dumbovita/routun"
-  url "https://github.com/dumbovita/routun/archive/refs/tags/v1.4.1.tar.gz"
-  sha256 "dc17f210a197bcbe5255ea3f9231b1e9bd05f5eccc6e1c0165396eea6815a8d0"
+  url "https://github.com/dumbovita/routun/archive/refs/tags/v1.4.2.tar.gz"
+  sha256 "fae1e911c222567c058c5b7ceb0644b9989d83e1fe850a61da504b503c3f2ea0"
   license "MIT"
   head "https://github.com/dumbovita/routun.git", branch: "main"
 
