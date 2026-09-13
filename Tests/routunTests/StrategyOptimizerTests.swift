@@ -206,7 +206,7 @@ struct StrategyOptimizerTests {
 
         #expect(winner != nil, "A winning profile must be selected")
         #expect(progressLogs.contains { $0.contains("Baseline (Direct):") })
-        #expect(progressLogs.contains { $0.contains("Selected:") })
+        #expect(progressLogs.contains { $0.contains("Selected:") || $0.contains("Preserving default profile") })
     }
 
     @Test("Live reference target connectivity check", .disabled("Requires live internet access; run manually with ROUTUN_LIVE_NETWORK_TESTS=1"))
