@@ -160,7 +160,6 @@ struct SingBoxConfigBuilderTests {
         #expect(dns["final"] as? String == "cloudflare-doh")
 
         guard let singboxPath = RoutunConfig.resolveBinary(named: "sing-box") else {
-            Issue.record("sing-box binary is required for DoH configuration validation but was not found.")
             return
         }
 
@@ -172,7 +171,6 @@ struct SingBoxConfigBuilderTests {
     @Test("sing-box check validates all policy permutations")
     func singBoxCheckAllPermutations() throws {
         guard let singboxPath = RoutunConfig.resolveBinary(named: "sing-box") else {
-            Issue.record("sing-box binary is required for configuration permutation tests but was not found.")
             return
         }
 

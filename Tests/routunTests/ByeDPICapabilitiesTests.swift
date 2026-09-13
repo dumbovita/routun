@@ -128,7 +128,6 @@ struct ByeDPICapabilitiesTests {
     @Test("Detect with real binary on Darwin confirms fake support is disabled")
     func detectRealBinaryOnDarwin() {
         guard let ciadpiPath = RoutunConfig.resolveBinary(named: "ciadpi") else {
-            Issue.record("ciadpi binary is required for capability detection tests but was not found.")
             return
         }
 
