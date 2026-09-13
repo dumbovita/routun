@@ -10,6 +10,7 @@ public final class RoutunDaemon {
     private var isShuttingDown = false
     private var sigtermSource: DispatchSourceSignal?
     private var sigintSource: DispatchSourceSignal?
+    private var appWatcher: DispatchSourceFileSystemObject?
 
     public init(config: RoutunConfig = RoutunConfig.daemonConfiguration()) {
         self.config = config
@@ -39,6 +40,9 @@ public final class RoutunDaemon {
         waitForSocksPort()
         startSingbox()
         verifyTunInterface()
+
+        DiscordPatcher.autoPatchIfNeeded(config: config)
+        appWatcher = DiscordPatcher.startApplicationsFolderWatcher(config: config)
 
         writePidFile()
         logger.info("routun service active: ciadpi (PID \(ciadpiProcess?.processIdentifier ?? 0)), sing-box (PID \(singboxProcess?.processIdentifier ?? 0)).")
@@ -292,6 +296,9 @@ public final class RoutunDaemon {
         isShuttingDown = true
 
         logger.info("Received \(signalName). Performing graceful shutdown sequence...")
+
+        appWatcher?.cancel()
+        appWatcher = nil
 
         // Terminate sing-box first so its TUN routes are removed before ByeDPI exits.
         if let singbox = singboxProcess {

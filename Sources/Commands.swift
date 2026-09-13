@@ -237,6 +237,23 @@ public final class RoutunCommands {
             print("  TUN Interface:  \(yellow)INACTIVE (normal when stopped)\(reset)")
         }
 
+        // Discord macOS status
+        let discordStatus = DiscordPatcher.detectStatus()
+        let prefMode = config.discordEvasion?.displayName ?? "not configured"
+        switch discordStatus {
+        case .openasar:
+            print("  Discord macOS:  \(green)INSTALLED (Patched with OpenAsar)\(reset)")
+        case .updaterDisabled:
+            print("  Discord macOS:  \(green)INSTALLED (Host Updater Disabled)\(reset)")
+        case .unpatched:
+            print("  Discord macOS:  \(yellow)INSTALLED (Unpatched - run 'sudo routun install' to configure)\(reset)")
+        case .notInstalled:
+            let armedNote = config.discordEvasion != nil && config.discordEvasion != DiscordEvasionMode.none
+                ? " (auto-patch armed: \(prefMode))"
+                : ""
+            print("  Discord macOS:  \(cyan)NOT INSTALLED\(reset)\(armedNote)")
+        }
+
         print("========================================")
     }
 
@@ -246,9 +263,82 @@ public final class RoutunCommands {
         let result = ServiceManager.shared.installAndStart()
         if result.success {
             print("\(green)\(result.message)\(reset)")
+            promptDiscordEvasion()
         } else {
             print("\(red)Error installing service:\(reset) \(result.message)")
             exit(1)
+        }
+    }
+
+    private static func promptDiscordEvasion() {
+        var config = RoutunConfig.load()
+        let currentStatus = DiscordPatcher.detectStatus()
+
+        switch currentStatus {
+        case .openasar:
+            print("\n\(green)✔ Discord macOS is already configured with OpenAsar. Preserving existing setup.\(reset)")
+            config.discordEvasion = .openasar
+            try? config.save()
+            return
+        case .updaterDisabled:
+            print("\n\(green)✔ Discord macOS already has the host updater disabled. Preserving existing setup.\(reset)")
+            config.discordEvasion = .disableUpdater
+            try? config.save()
+            return
+        case .unpatched, .notInstalled:
+            break
+        }
+
+        let isTty = isatty(STDIN_FILENO) != 0
+
+        print("\n\(bold)Discord macOS DPI Evasion Setup:\(reset)")
+        print("Discord on macOS uses a legacy TLS 1.2 updater that is interrupted")
+        print("by network DPI filters during its startup update handshake.")
+        print("")
+        print("Choose your bypass method:")
+        print("  1) OpenAsar (Recommended: open-source core, fast startup, native TLS 1.3 updates)")
+        print("  2) Disable Host Updater (Bypasses legacy host updater, preserves in-app module updates)")
+        print("  3) Skip (Do not configure)")
+        print("")
+
+        var chosenMode: DiscordEvasionMode = config.discordEvasion ?? .openasar
+        if isTty {
+            print("Selection [1-3] (default: 1): ", terminator: "")
+            fflush(stdout)
+            if let line = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines), !line.isEmpty {
+                switch line {
+                case "1": chosenMode = .openasar
+                case "2": chosenMode = .disableUpdater
+                case "3": chosenMode = .none
+                default:
+                    print("\(yellow)Invalid selection. Using default: OpenAsar.\(reset)")
+                    chosenMode = .openasar
+                }
+            }
+        } else {
+            print("Non-interactive mode: using \(chosenMode.displayName).")
+        }
+
+        config.discordEvasion = chosenMode
+        try? config.save()
+
+        if chosenMode == .none {
+            print("\(yellow)Discord evasion disabled.\(reset)")
+            if DiscordPatcher.isDiscordInstalled {
+                _ = DiscordPatcher.apply(mode: .none)
+            }
+            return
+        }
+
+        if DiscordPatcher.isDiscordInstalled {
+            let res = DiscordPatcher.apply(mode: chosenMode)
+            if res.success {
+                print("\(green)✔ \(res.message)\(reset)")
+            } else {
+                print("\(yellow)Warning: \(res.message)\(reset)")
+            }
+        } else {
+            print("\(cyan)✔ Preference saved as '\(chosenMode.displayName)'. routun will automatically patch Discord as soon as it is installed.\(reset)")
         }
     }
 
@@ -258,9 +348,48 @@ public final class RoutunCommands {
         let result = ServiceManager.shared.uninstall()
         if result.success {
             print("\(green)\(result.message)\(reset)")
+            handleDiscordUninstallCleanup()
         } else {
             print("\(red)Error uninstalling service:\(reset) \(result.message)")
             exit(1)
+        }
+    }
+
+    private static func handleDiscordUninstallCleanup() {
+        let status = DiscordPatcher.detectStatus()
+        switch status {
+        case .updaterDisabled:
+            print("\(cyan)Restoring Discord host updater to default configuration...\(reset)")
+            _ = DiscordPatcher.apply(mode: .none)
+            print("\(green)✔ Discord host updater restored to default.\(reset)")
+
+        case .openasar:
+            let isTty = isatty(STDIN_FILENO) != 0
+            var keepOpenAsar = true
+            if isTty {
+                print("\n\(bold)Discord OpenAsar Configuration:\(reset)")
+                print("Discord macOS is currently enhanced with OpenAsar (faster startup, native TLS 1.3 updates).")
+                print("Keep OpenAsar installed? [Y/n] (default: Y): ", terminator: "")
+                fflush(stdout)
+                if let line = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                   line == "n" || line == "no" {
+                    keepOpenAsar = false
+                }
+            }
+            if keepOpenAsar {
+                print("\(green)✔ OpenAsar kept intact.\(reset)")
+            } else {
+                print("\(cyan)Restoring stock Discord app.asar...\(reset)")
+                let res = DiscordPatcher.apply(mode: .none)
+                if res.success {
+                    print("\(green)✔ Stock Discord restored successfully.\(reset)")
+                } else {
+                    print("\(yellow)Warning: \(res.message)\(reset)")
+                }
+            }
+
+        case .unpatched, .notInstalled:
+            break
         }
     }
 

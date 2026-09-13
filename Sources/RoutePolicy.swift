@@ -23,6 +23,20 @@ public enum DNSMode: String, Codable, CaseIterable {
     case doh
 }
 
+public enum DiscordEvasionMode: String, Codable, CaseIterable {
+    case openasar = "openasar"
+    case disableUpdater = "disable_updater"
+    case none = "none"
+
+    public var displayName: String {
+        switch self {
+        case .openasar: return "OpenAsar"
+        case .disableUpdater: return "Disable Host Updater"
+        case .none: return "None"
+        }
+    }
+}
+
 /// Represents the active user policy for selective DPI bypass routing.
 public struct RoutePolicy: Codable, Equatable {
     public var mode: RoutingMode

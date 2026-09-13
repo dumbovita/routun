@@ -43,6 +43,7 @@ struct ConfigMigrationTests {
         #expect(config.groupPreferences.isEmpty)
         #expect(config.customInclude.isEmpty)
         #expect(config.customExclude.isEmpty)
+        #expect(config.discordEvasion == nil)
 
         // Sanitizing legacy args strips the inert -t 3
         let sanitized = ByeDPICapability.darwinStandard.sanitize(args: config.ciadpiArgs)
@@ -50,6 +51,39 @@ struct ConfigMigrationTests {
         #expect(sanitized.contains("-s"))
         #expect(sanitized.contains("-d"))
         #expect(sanitized.contains("-r"))
+    }
+
+    @Test("Discord evasion mode round-trip serialization")
+    func discordEvasionRoundTrip() throws {
+        var config = RoutunConfig.defaultConfiguration()
+        config.discordEvasion = .openasar
+
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(RoutunConfig.self, from: data)
+        #expect(decoded.discordEvasion == .openasar)
+        #expect(decoded.discordEvasion?.displayName == "OpenAsar")
+    }
+
+    @Test("Discord evasion modes and patch status detection")
+    func discordEvasionModesAndStatus() throws {
+        #expect(DiscordEvasionMode.openasar.displayName == "OpenAsar")
+        #expect(DiscordEvasionMode.disableUpdater.displayName == "Disable Host Updater")
+        #expect(DiscordEvasionMode.none.displayName == "None")
+
+        for mode in DiscordEvasionMode.allCases {
+            let data = try JSONEncoder().encode(mode)
+            let decoded = try JSONDecoder().decode(DiscordEvasionMode.self, from: data)
+            #expect(decoded == mode)
+        }
+
+        let status = DiscordPatcher.detectStatus()
+        switch status {
+        case .openasar, .updaterDisabled, .unpatched, .notInstalled:
+            #expect(true)
+        }
+
+        let installed = FileManager.default.fileExists(atPath: DiscordPatcher.discordAppPath)
+        #expect(DiscordPatcher.isDiscordInstalled == installed)
     }
 
     @Test("Round-trip encoding and decoding preserves all v1.4.0 policy configurations")

@@ -16,6 +16,7 @@ public struct RoutunConfig: Codable, Equatable {
     public var groupPreferences: [String: Bool]
     public var customInclude: [String]
     public var customExclude: [String]
+    public var discordEvasion: DiscordEvasionMode?
 
     enum CodingKeys: String, CodingKey {
         case ciadpiPath = "ciadpi_path"
@@ -32,6 +33,7 @@ public struct RoutunConfig: Codable, Equatable {
         case groupPreferences = "group_preferences"
         case customInclude = "custom_include"
         case customExclude = "custom_exclude"
+        case discordEvasion = "discord_evasion"
     }
 
     public init(
@@ -48,7 +50,8 @@ public struct RoutunConfig: Codable, Equatable {
         enableIPv6: Bool = false,
         groupPreferences: [String: Bool] = [:],
         customInclude: [String] = [],
-        customExclude: [String] = []
+        customExclude: [String] = [],
+        discordEvasion: DiscordEvasionMode? = nil
     ) {
         self.ciadpiPath = ciadpiPath
         self.singboxPath = singboxPath
@@ -64,6 +67,7 @@ public struct RoutunConfig: Codable, Equatable {
         self.groupPreferences = groupPreferences
         self.customInclude = ServiceGroupCatalog.normalize(customInclude)
         self.customExclude = ServiceGroupCatalog.normalize(customExclude)
+        self.discordEvasion = discordEvasion
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,6 +88,7 @@ public struct RoutunConfig: Codable, Equatable {
         let rawExclude = try container.decodeIfPresent([String].self, forKey: .customExclude) ?? []
         self.customInclude = ServiceGroupCatalog.normalize(rawInclude)
         self.customExclude = ServiceGroupCatalog.normalize(rawExclude)
+        self.discordEvasion = try container.decodeIfPresent(DiscordEvasionMode.self, forKey: .discordEvasion)
     }
 
     public var routePolicy: RoutePolicy {
