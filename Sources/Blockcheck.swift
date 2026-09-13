@@ -104,22 +104,22 @@ public enum StrategyTargets {
         StrategyTarget(name: "Internet Archive", host: "archive.org", port: 443, path: "/"),
         StrategyTarget(name: "Deutsche Welle", host: "dw.com", port: 443, path: "/"),
         StrategyTarget(name: "Tor Project", host: "torproject.org", port: 443, path: "/"),
-        StrategyTarget(name: "RuTracker", host: "rutracker.org", port: 443, path: "/"),
+        StrategyTarget(name: "BBC", host: "bbc.com", port: 443, path: "/"),
         StrategyTarget(name: "Chess.com", host: "chess.com", port: 443, path: "/"),
         StrategyTarget(name: "Signal", host: "signal.org", port: 443, path: "/"),
 
-        // Infrastructure & Encrypted DNS (DoH)
-        StrategyTarget(name: "Cloudflare DoH", host: "cloudflare-dns.com", port: 443, path: "/dns-query"),
+        // Infrastructure & Encrypted DNS
+        StrategyTarget(name: "Cloudflare DNS", host: "cloudflare-dns.com", port: 443, path: "/"),
         StrategyTarget(name: "Cloudflare", host: "cloudflare.com", port: 443, path: "/"),
 
-        // Major international social media & streaming services
+        // Major international social media & publishing services
         StrategyTarget(name: "Instagram", host: "instagram.com", port: 443, path: "/"),
         StrategyTarget(name: "X / Twitter", host: "x.com", port: 443, path: "/"),
         StrategyTarget(name: "YouTube", host: "youtube.com", port: 443, path: "/"),
         StrategyTarget(name: "Google Video CDN", host: "redirector.googlevideo.com", port: 443, path: "/"),
         StrategyTarget(name: "Twitch", host: "twitch.tv", port: 443, path: "/"),
         StrategyTarget(name: "Spotify", host: "spotify.com", port: 443, path: "/"),
-        StrategyTarget(name: "Medium", host: "medium.com", port: 443, path: "/"),
+        StrategyTarget(name: "Substack", host: "substack.com", port: 443, path: "/"),
 
         // Core daily reference & authentication endpoints
         StrategyTarget(name: "Google", host: "google.com", port: 443, path: "/"),
@@ -396,7 +396,18 @@ public final class StrategyOptimizer {
     private let physicalInterface: String?
     private let probeOverride: ((StrategyTarget, Int?, Double) -> ProbeResult)?
     private let activeProcessLock = NSLock()
-    private var activeTestProcess: Process?
+    private var activeTestProcesses = [Int: Process]()
+
+    public static func findFreePort(excluding: Set<Int> = []) -> Int {
+        for _ in 0..<20 {
+            let port = findFreePort()
+            if !excluding.contains(port) {
+                return port
+            }
+        }
+        let fallback = (excluding.max() ?? 10885) + 1
+        return fallback
+    }
 
     public static func findFreePort() -> Int {
         var addr = sockaddr_in()
@@ -456,12 +467,12 @@ public final class StrategyOptimizer {
 
     public func cancel() {
         activeProcessLock.lock()
-        let process = activeTestProcess
-        activeTestProcess = nil
+        let processes = activeTestProcesses
+        activeTestProcesses.removeAll()
         activeProcessLock.unlock()
 
-        if let process {
-            terminateProcess(process, port: testPort)
+        for (port, process) in processes {
+            terminateProcess(process, port: port)
         }
     }
 
@@ -510,9 +521,9 @@ public final class StrategyOptimizer {
             "-s",
             "-o", "/dev/null",
             "-w", "%{http_code} %{time_total}",
-            "--connect-timeout", "2.0",
-            "--max-time", String(format: "%.1f", max(timeout, 3.0)),
-            "-A", "Mozilla/5.0 (Macintosh; Apple Mac OS X) routun-blockcheck/2.0"
+            "--connect-timeout", "3.0",
+            "--max-time", String(format: "%.1f", max(timeout, 4.0)),
+            "-A", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
         ]
 
         if let port = socksPort {
@@ -550,7 +561,7 @@ public final class StrategyOptimizer {
                     isReachable = true
                     category = .none
                     detail = "HTTP \(statusCode)"
-                } else if [400, 401, 404, 405].contains(statusCode) {
+                } else if [400, 401, 404, 405, 415].contains(statusCode) {
                     // Standard application responses indicating TLS and HTTP handshake completed
                     isReachable = true
                     category = .none
@@ -728,10 +739,171 @@ public final class StrategyOptimizer {
         }
     }
 
-    private func setActiveTestProcess(_ process: Process?) {
+    private func setActiveTestProcess(_ process: Process?, for port: Int) {
         activeProcessLock.lock()
-        activeTestProcess = process
+        if let process {
+            activeTestProcesses[port] = process
+        } else {
+            activeTestProcesses.removeValue(forKey: port)
+        }
         activeProcessLock.unlock()
+    }
+
+    private func evaluateProfile(
+        profile: StrategyProfile,
+        index: Int,
+        totalProfiles: Int,
+        port: Int,
+        evalTargets: [StrategyTarget],
+        blockedTargets: [StrategyTarget],
+        customTargets: [StrategyTarget],
+        baselineReachableHosts: Set<String>,
+        baselineReachableCount: Int,
+        verbose: Bool
+    ) -> (Phase1Score, String) {
+        let idxPadded = String(format: "%2d", index + 1)
+        let paddedId = profile.id.padding(toLength: 28, withPad: " ", startingAt: 0)
+
+        guard let testProc = spawnTestCiadpi(profile: profile, port: port) else {
+            let errLog = "  [\(idxPadded)/\(totalProfiles)] \(paddedId) \u{001B}[31mFailed to launch test instance\u{001B}[0m"
+            let fallbackScore = Phase1Score(
+                profile: profile,
+                unlockedCount: 0,
+                reachableCount: 0,
+                totalTargets: evalTargets.count,
+                averageLatencyMs: 9999,
+                timeouts: 0,
+                customTargetsPassed: 0,
+                totalCustomTargets: customTargets.count,
+                regressionCount: baselineReachableHosts.count,
+                regressionHosts: Array(baselineReachableHosts)
+            )
+            return (fallbackScore, errLog)
+        }
+
+        setActiveTestProcess(testProc, for: port)
+        defer {
+            terminateProcess(testProc, port: port)
+            setActiveTestProcess(nil, for: port)
+        }
+
+        let blockedSet = Set(blockedTargets.map { $0.host })
+        let customSet = Set(customTargets.map { $0.host })
+
+        // 1. Two-stage screening: test blocked & custom targets first
+        let screenTargets = evalTargets.filter { blockedSet.contains($0.host) || customSet.contains($0.host) }
+        let initialTargets = screenTargets.isEmpty ? evalTargets : screenTargets
+
+        let initialResults = probeConcurrently(targets: initialTargets, socksPort: port, timeout: 2.0, attempts: 1)
+
+        var unlockedCount = 0
+        var customPassed = 0
+        for res in initialResults {
+            if res.isReachable {
+                if blockedSet.contains(res.target.host) { unlockedCount += 1 }
+                if customSet.contains(res.target.host) { customPassed += 1 }
+            }
+        }
+
+        let isContender = (unlockedCount > 0) || (!customTargets.isEmpty && customPassed > 0)
+
+        var allResults: [ProbeResult]
+        var totalReachable = 0
+        var totalLatency = 0
+        var timeouts = 0
+        var regressions = [String]()
+
+        if !isContender && !blockedTargets.isEmpty {
+            // Early Exit: profile unlocked 0 targets; skip remaining targets to save time and bandwidth
+            allResults = initialResults
+            totalReachable = baselineReachableCount - (blockedTargets.count - unlockedCount)
+            timeouts = initialResults.filter { $0.exitCode == 28 }.count
+            let passedInitial = initialResults.filter { $0.isReachable }
+            totalLatency = passedInitial.reduce(0) { $0 + $1.latencyMs }
+        } else {
+            // Viable candidate: evaluate remaining targets to verify zero regressions
+            let remainingTargets = evalTargets.filter { target in
+                !initialTargets.contains(where: { $0.host == target.host })
+            }
+
+            let remainingResults = probeConcurrently(targets: remainingTargets, socksPort: port, timeout: 2.0, attempts: 1)
+            allResults = initialResults + remainingResults
+
+            // Transient jitter recovery: if a baseline-healthy target failed on single probe, retry once
+            for i in 0..<allResults.count {
+                let res = allResults[i]
+                if !res.isReachable && baselineReachableHosts.contains(res.target.host) {
+                    let retry = self.probe(target: res.target, socksPort: port, timeout: 3.0, attempts: 1)
+                    if retry.isReachable {
+                        allResults[i] = retry
+                    }
+                }
+            }
+
+            let candidateReachableHosts = Set(allResults.filter { $0.isReachable }.map { $0.target.host })
+            regressions = Array(baselineReachableHosts.subtracting(candidateReachableHosts)).sorted()
+
+            unlockedCount = 0
+            customPassed = 0
+            totalReachable = 0
+            totalLatency = 0
+            timeouts = 0
+
+            for res in allResults {
+                if res.isReachable {
+                    totalReachable += 1
+                    totalLatency += res.latencyMs
+                    if blockedSet.contains(res.target.host) { unlockedCount += 1 }
+                    if customSet.contains(res.target.host) { customPassed += 1 }
+                } else if res.exitCode == 28 {
+                    timeouts += 1
+                }
+            }
+        }
+
+        let passedCount = isContender ? totalReachable : (initialResults.filter { $0.isReachable }.count)
+        let avgLatency = passedCount > 0 ? (totalLatency / passedCount) : 9999
+        let score = Phase1Score(
+            profile: profile,
+            unlockedCount: unlockedCount,
+            reachableCount: totalReachable,
+            totalTargets: evalTargets.count,
+            averageLatencyMs: avgLatency,
+            timeouts: timeouts,
+            customTargetsPassed: customPassed,
+            totalCustomTargets: customTargets.count,
+            regressionCount: regressions.count,
+            regressionHosts: regressions
+        )
+
+        let unlockColor = (unlockedCount > 0) ? "\u{001B}[32m" : "\u{001B}[33m"
+        var statusDetails = [String]()
+        if !blockedTargets.isEmpty {
+            statusDetails.append("\(unlockColor)+\(unlockedCount) unlocked\u{001B}[0m")
+        }
+        if regressions.count > 0 {
+            statusDetails.append("\u{001B}[31m-\(regressions.count) regressed\u{001B}[0m")
+        }
+        if !customTargets.isEmpty {
+            let cColor = (customPassed == customTargets.count) ? "\u{001B}[32m" : "\u{001B}[31m"
+            statusDetails.append("\(cColor)\(customPassed)/\(customTargets.count) custom ok\u{001B}[0m")
+        }
+        let detailStr = statusDetails.isEmpty ? "" : " (\(statusDetails.joined(separator: ", ")))"
+        let statusSuffix = (totalReachable > 0)
+            ? "\(totalReachable)/\(evalTargets.count) reachable\(detailStr) (\(avgLatency)ms)"
+            : "\u{001B}[31m0/\(evalTargets.count) reachable (blocked)\u{001B}[0m"
+
+        var logOutput = "  [\(idxPadded)/\(totalProfiles)] \(paddedId) \(statusSuffix)"
+
+        if verbose {
+            for res in allResults {
+                let sym = res.isReachable ? "\u{001B}[32m✓\u{001B}[0m" : "\u{001B}[31m✗\u{001B}[0m"
+                let col = res.isReachable ? "\u{001B}[32m" : "\u{001B}[31m"
+                logOutput += "\n      \(sym) \(res.target.host.padding(toLength: 26, withPad: " ", startingAt: 0)): \(col)\(res.detail)\u{001B}[0m (\(res.latencyMs)ms)"
+            }
+        }
+
+        return (score, logOutput)
     }
 
     /// Run the comprehensive strategy optimization routine.
@@ -796,93 +968,78 @@ public final class StrategyOptimizer {
 
         let blockedSet = Set(blockedTargets.map { $0.host })
         let customSet = Set(customTargets.map { $0.host })
-        var phase1Scores = [Phase1Score]()
 
-        for (index, profile) in candidateProfiles.enumerated() {
-            guard let testProc = spawnTestCiadpi(profile: profile, port: testPort) else {
-                emit("  [\(index + 1)/\(candidateProfiles.count)] \(profile.id.padding(toLength: 28, withPad: " ", startingAt: 0)) \u{001B}[31mFailed to launch test instance\u{001B}[0m")
-                continue
-            }
-            setActiveTestProcess(testProc)
-
-            // Test candidate against the entire target list (all links)
-            let probeResults = probeConcurrently(targets: evalTargets, socksPort: testPort, timeout: 1.5, attempts: 1)
-            terminateProcess(testProc, port: testPort)
-            setActiveTestProcess(nil)
-            let candidateReachableHosts = Set(probeResults.filter { $0.isReachable }.map { $0.target.host })
-
-            var unlockedCount = 0
-            var customPassed = 0
-            var totalReachable = 0
-            var totalLatency = 0
-            var timeouts = 0
-
-            for res in probeResults {
-                if res.isReachable {
-                    totalReachable += 1
-                    totalLatency += res.latencyMs
-                    if blockedSet.contains(res.target.host) {
-                        unlockedCount += 1
-                    }
-                    if customSet.contains(res.target.host) {
-                        customPassed += 1
-                    }
-                } else if res.exitCode == 28 {
-                    timeouts += 1
-                }
-            }
-
-            // Track regressions against baseline
-            let regressions = Array(baselineReachableHosts.subtracting(candidateReachableHosts)).sorted()
-            let regressionCount = regressions.count
-
-            if verbose {
-                for res in probeResults {
-                    let sym = res.isReachable ? "\u{001B}[32m✓\u{001B}[0m" : "\u{001B}[31m✗\u{001B}[0m"
-                    let col = res.isReachable ? "\u{001B}[32m" : "\u{001B}[31m"
-                    emit("      \(sym) \(res.target.host.padding(toLength: 26, withPad: " ", startingAt: 0)): \(col)\(res.detail)\u{001B}[0m (\(res.latencyMs)ms)")
-                }
-            }
-
-            let avgLatency = totalReachable > 0 ? (totalLatency / totalReachable) : 9999
-            let p1Score = Phase1Score(
-                profile: profile,
-                unlockedCount: unlockedCount,
-                reachableCount: totalReachable,
-                totalTargets: evalTargets.count,
-                averageLatencyMs: avgLatency,
-                timeouts: timeouts,
-                customTargetsPassed: customPassed,
-                totalCustomTargets: customTargets.count,
-                regressionCount: regressionCount,
-                regressionHosts: regressions
-            )
-            phase1Scores.append(p1Score)
-
-            let unlockColor = (unlockedCount > 0) ? "\u{001B}[32m" : "\u{001B}[33m"
-            let paddedId = profile.id.padding(toLength: 28, withPad: " ", startingAt: 0)
-            var statusDetails = [String]()
-            if !blockedTargets.isEmpty {
-                statusDetails.append("\(unlockColor)+\(unlockedCount) unlocked\u{001B}[0m")
-            }
-            if regressionCount > 0 {
-                statusDetails.append("\u{001B}[31m-\(regressionCount) regressed\u{001B}[0m")
-            }
-            if !customTargets.isEmpty {
-                let cColor = (customPassed == customTargets.count) ? "\u{001B}[32m" : "\u{001B}[31m"
-                statusDetails.append("\(cColor)\(customPassed)/\(customTargets.count) custom ok\u{001B}[0m")
-            }
-            let detailStr = statusDetails.isEmpty ? "" : " (\(statusDetails.joined(separator: ", ")))"
-            let statusSuffix = (totalReachable > 0)
-                ? "\(totalReachable)/\(evalTargets.count) reachable\(detailStr) (\(avgLatency)ms)"
-                : "\u{001B}[31m0/\(evalTargets.count) reachable (blocked)\u{001B}[0m"
-            let idxPadded = String(format: "%2d", index + 1)
-            emit("  [\(idxPadded)/\(candidateProfiles.count)] \(paddedId) \(statusSuffix)")
+        // Worker allocation: 2 concurrent workers on isolated ports for optimal speed and zero port conflicts
+        let workerCount = min(2, candidateProfiles.count)
+        var workerPorts = [testPort]
+        if workerCount > 1 {
+            let p2 = StrategyOptimizer.findFreePort(excluding: Set(workerPorts))
+            workerPorts.append(p2)
         }
+
+        var phase1Scores = [Phase1Score?](repeating: nil, count: candidateProfiles.count)
+        var phase1Logs = [String?](repeating: nil, count: candidateProfiles.count)
+
+        var nextIndex = 0
+        let queueLock = NSLock()
+        var nextPrintIndex = 0
+        let printLock = NSLock()
+
+        func flushLogs() {
+            printLock.lock()
+            defer { printLock.unlock() }
+            while nextPrintIndex < candidateProfiles.count, let log = phase1Logs[nextPrintIndex] {
+                emit(log)
+                nextPrintIndex += 1
+            }
+        }
+
+        let group = DispatchGroup()
+        for workerId in 0..<workerCount {
+            let port = workerPorts[workerId]
+            group.enter()
+            DispatchQueue.global().async {
+                defer { group.leave() }
+                while true {
+                    queueLock.lock()
+                    if nextIndex >= candidateProfiles.count {
+                        queueLock.unlock()
+                        break
+                    }
+                    let index = nextIndex
+                    nextIndex += 1
+                    queueLock.unlock()
+
+                    let profile = candidateProfiles[index]
+                    let (score, log) = self.evaluateProfile(
+                        profile: profile,
+                        index: index,
+                        totalProfiles: candidateProfiles.count,
+                        port: port,
+                        evalTargets: evalTargets,
+                        blockedTargets: blockedTargets,
+                        customTargets: self.customTargets,
+                        baselineReachableHosts: baselineReachableHosts,
+                        baselineReachableCount: baselineReachableCount,
+                        verbose: self.verbose
+                    )
+
+                    printLock.lock()
+                    phase1Scores[index] = score
+                    phase1Logs[index] = log
+                    printLock.unlock()
+
+                    flushLogs()
+                }
+            }
+        }
+        group.wait()
+
+        let validScores = phase1Scores.compactMap { $0 }
 
         // STRICT REGRESSION FILTER:
         // A profile is only accepted if it resolves blocked links WITHOUT causing regressions on any existing links.
-        let zeroRegressionContenders = phase1Scores.filter { score in
+        let zeroRegressionContenders = validScores.filter { score in
             guard score.regressionCount == 0 else { return false }
             if !customTargets.isEmpty && score.customTargetsPassed == 0 {
                 return false
@@ -922,11 +1079,33 @@ public final class StrategyOptimizer {
         var verifiedScores = [Phase1Score]()
         for (idx, contender) in topContenders.enumerated() {
             guard let testProc = spawnTestCiadpi(profile: contender.profile, port: testPort) else { continue }
-            setActiveTestProcess(testProc)
+            setActiveTestProcess(testProc, for: testPort)
 
-            let fullResults = probeConcurrently(targets: evalTargets, socksPort: testPort, timeout: 1.8, attempts: 2)
+            var fullResults = probeConcurrently(targets: evalTargets, socksPort: testPort, timeout: 2.5, attempts: 2)
+
+            // Tiebreaker probe if a baseline-reachable target succeeded 1/2 attempts
+            for i in 0..<fullResults.count {
+                let res = fullResults[i]
+                if baselineReachableHosts.contains(res.target.host) && !res.isReliable && res.successfulAttempts > 0 {
+                    let tiebreaker = self.probe(target: res.target, socksPort: testPort, timeout: 3.0, attempts: 1)
+                    if tiebreaker.isReachable {
+                        fullResults[i] = ProbeResult(
+                            target: res.target,
+                            isReachable: true,
+                            latencyMs: (res.latencyMs + tiebreaker.latencyMs) / 2,
+                            statusCode: tiebreaker.statusCode,
+                            exitCode: tiebreaker.exitCode,
+                            detail: "\(tiebreaker.detail) (recovered: 2/3)",
+                            failureCategory: .none,
+                            attempts: 2,
+                            successfulAttempts: 2
+                        )
+                    }
+                }
+            }
+
             terminateProcess(testProc, port: testPort)
-            setActiveTestProcess(nil)
+            setActiveTestProcess(nil, for: testPort)
             let candidateReachableHosts = Set(fullResults.filter { $0.isReliable }.map { $0.target.host })
             var totalReachable = 0
             var unlockedCount = 0

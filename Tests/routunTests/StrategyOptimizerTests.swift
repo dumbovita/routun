@@ -57,6 +57,33 @@ struct StrategyOptimizerTests {
         }
     }
 
+    @Test("Curated strategy targets exclude fragile WAF and high-latency endpoints")
+    func curatedStrategyTargetsExcludeFragileEndpoints() {
+        let targets = StrategyTargets.all
+        let hosts = Set(targets.map(\.host))
+
+        #expect(targets.count == 26, "Expected exactly 26 targets (1 reference + 25 evaluation)")
+        #expect(!hosts.contains("medium.com"), "medium.com must be excluded due to Cloudflare/Datadome WAF 403 blocks")
+        #expect(!hosts.contains("rutracker.org"), "rutracker.org must be excluded due to erratic multi-second latency spikes")
+        #expect(hosts.contains("substack.com"), "substack.com should be present as reliable publishing target")
+        #expect(hosts.contains("bbc.com"), "bbc.com should be present as reliable censorship target")
+        #expect(hosts.contains("cloudflare-dns.com"))
+
+        if let cfDns = targets.first(where: { $0.host == "cloudflare-dns.com" }) {
+            #expect(cfDns.path == "/", "Cloudflare DNS should use root path rather than /dns-query to prevent HTTP 415")
+        }
+    }
+
+    @Test("findFreePort with exclusion set avoids port collision")
+    func findFreePortExcludingAvoidsCollision() {
+        let port1 = StrategyOptimizer.findFreePort()
+        let port2 = StrategyOptimizer.findFreePort(excluding: [port1])
+        #expect(port1 != port2, "Allocated ports must be distinct")
+
+        let port3 = StrategyOptimizer.findFreePort(excluding: [port1, port2])
+        #expect(![port1, port2].contains(port3), "Allocated port must not collide with excluded ports")
+    }
+
     @Test("Probe always makes two attempts and marks identical results reliable")
     func probeAlwaysMakesTwoAttempts() {
         let target = StrategyTarget(name: "Apple", host: "apple.com")
@@ -148,6 +175,38 @@ struct StrategyOptimizerTests {
         #expect(plist["StandardOutPath"] == nil)
         #expect(plist["StandardErrorPath"] == nil)
         #expect((plist["KeepAlive"] as? [String: Any])?["SuccessfulExit"] as? Bool == false)
+    }
+
+    @Test("Optimizer runs full pipeline with early-exit screening and selects zero-regression winner")
+    func optimizerPipelineWithMockProbes() {
+        let optimizer = StrategyOptimizer(quick: true) { target, socksPort, _ in
+            let isReachable: Bool
+            if socksPort == nil {
+                isReachable = !["discord.com", "gateway.discord.gg"].contains(target.host)
+            } else {
+                isReachable = true
+            }
+            return ProbeResult(
+                target: target,
+                isReachable: isReachable,
+                latencyMs: 15,
+                statusCode: isReachable ? 200 : 0,
+                exitCode: isReachable ? 0 : 35,
+                detail: isReachable ? "HTTP 200" : "Blocked",
+                failureCategory: isReachable ? .none : .tlsDpiBlock,
+                attempts: 1,
+                successfulAttempts: isReachable ? 1 : 0
+            )
+        }
+
+        var progressLogs = [String]()
+        let winner = optimizer.run { log in
+            progressLogs.append(log)
+        }
+
+        #expect(winner != nil, "A winning profile must be selected")
+        #expect(progressLogs.contains { $0.contains("Baseline (Direct):") })
+        #expect(progressLogs.contains { $0.contains("Selected:") })
     }
 
     @Test("Live reference target connectivity check", .disabled("Requires live internet access; run manually with ROUTUN_LIVE_NETWORK_TESTS=1"))
