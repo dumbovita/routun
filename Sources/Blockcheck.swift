@@ -495,12 +495,10 @@ public final class StrategyOptimizer {
             }
         }
 
-        // Include any remaining group domains or custom includes
-        for suffix in bypassedSuffixes where !excludedSet.contains(suffix) {
-            if !seenHosts.contains(suffix) {
-                if seenHosts.insert(suffix).inserted {
-                    targets.append(StrategyTarget(name: suffix, host: suffix, port: 443, path: "/"))
-                }
+        // Include user-defined custom includes (only explicit custom additions, not raw catalog CDN suffixes)
+        for customHost in effectivePolicy.customInclude where !excludedSet.contains(customHost) {
+            if seenHosts.insert(customHost).inserted {
+                targets.append(StrategyTarget(name: customHost, host: customHost, port: 443, path: "/"))
             }
         }
 
@@ -1016,9 +1014,15 @@ public final class StrategyOptimizer {
             }
         }
 
-        let baselineReachableHosts = Set(evalTargets.filter { baselineResults[$0.host]?.isReachable ?? false }.map { $0.host })
-        let blockedTargets = evalTargets.filter { !baselineReachableHosts.contains($0.host) }
-        emit("Baseline (Direct): \(baselineReachableCount)/\(evalTargets.count) reachable (\(blockedTargets.count) blocked by DPI)\n")
+        let baselineDnsFailedHosts = Set(evalTargets.filter {
+            let res = baselineResults[$0.host]
+            return res?.failureCategory == .dnsFailure || res?.exitCode == 6
+        }.map { $0.host })
+
+        let activeEvalTargets = evalTargets.filter { !baselineDnsFailedHosts.contains($0.host) }
+        let baselineReachableHosts = Set(activeEvalTargets.filter { baselineResults[$0.host]?.isReachable ?? false }.map { $0.host })
+        let blockedTargets = activeEvalTargets.filter { !baselineReachableHosts.contains($0.host) }
+        emit("Baseline (Direct): \(baselineReachableCount)/\(activeEvalTargets.count) reachable (\(blockedTargets.count) blocked by DPI)\n")
 
         if blockedTargets.isEmpty {
             emit("\u{001B}[32mAll test targets are directly accessible on your current network without DPI bypass.\u{001B}[0m")
@@ -1028,7 +1032,7 @@ public final class StrategyOptimizer {
 
         let candidateProfiles = quick ? StrategyProfiles.canonical : StrategyProfiles.all
         let modeLabel = quick ? "canonical profiles" : "comprehensive combinations matrix"
-        emit("Testing \(candidateProfiles.count) \(modeLabel) (Full \(evalTargets.count)-target regression check):")
+        emit("Testing \(candidateProfiles.count) \(modeLabel) (Full \(activeEvalTargets.count)-target regression check):")
 
         let blockedSet = Set(blockedTargets.map { $0.host })
         let customSet = Set(customTargets.map { $0.host })
@@ -1077,7 +1081,7 @@ public final class StrategyOptimizer {
                         index: index,
                         totalProfiles: candidateProfiles.count,
                         port: port,
-                        evalTargets: evalTargets,
+                        evalTargets: activeEvalTargets,
                         blockedTargets: blockedTargets,
                         customTargets: self.customTargets,
                         baselineReachableHosts: baselineReachableHosts,
@@ -1097,29 +1101,37 @@ public final class StrategyOptimizer {
         group.wait()
 
         let validScores = phase1Scores.compactMap { $0 }
+        let referenceHosts = Set(["apple.com", "google.com", "wikipedia.org"])
 
-        // STRICT REGRESSION FILTER:
-        // A profile is only accepted if it resolves blocked links WITHOUT causing regressions on any existing links.
-        let zeroRegressionContenders = validScores.filter { score in
-            guard score.regressionCount == 0 else { return false }
+        // Disqualify any profile that breaks baseline-healthy reference services
+        let referenceSafeScores = validScores.filter { score in
+            !score.regressionHosts.contains(where: { referenceHosts.contains($0) })
+        }
+
+        // A contender must unlock at least one blocked service (or pass custom targets)
+        let contenders = referenceSafeScores.filter { score in
             if !customTargets.isEmpty && score.customTargetsPassed == 0 {
                 return false
             }
             return score.unlockedCount > 0 || (!customTargets.isEmpty && score.customTargetsPassed > 0)
         }
 
-        if zeroRegressionContenders.isEmpty {
-            emit("\n\u{001B}[33mWarning:\u{001B}[0m No profile satisfied DPI evasion without causing regressions on other targets.")
+        if contenders.isEmpty {
+            emit("\n\u{001B}[33mWarning:\u{001B}[0m No profile satisfied DPI evasion criteria.")
             emit("Preserving default profile to prevent breaking working services: \u{001B}[1m\(StrategyProfiles.defaultProfile.id)\u{001B}[0m\n")
             return StrategyProfiles.defaultProfile
         }
 
-        let rankedContenders = zeroRegressionContenders.sorted { a, b in
+        // Rank contenders prioritizing UNLOCKING BLOCKED TARGETS, then minimizing regressions
+        let rankedContenders = contenders.sorted { a, b in
             if a.customTargetsPassed != b.customTargetsPassed {
                 return a.customTargetsPassed > b.customTargetsPassed
             }
             if a.unlockedCount != b.unlockedCount {
                 return a.unlockedCount > b.unlockedCount
+            }
+            if a.regressionCount != b.regressionCount {
+                return a.regressionCount < b.regressionCount
             }
             if a.reachableCount != b.reachableCount {
                 return a.reachableCount > b.reachableCount
@@ -1135,7 +1147,7 @@ public final class StrategyOptimizer {
 
         // Stage 2: Thorough stability verification of top contenders across all targets with 2 attempts
         let topContenders = Array(rankedContenders.prefix(5))
-        emit("\nVerifying \(topContenders.count) top zero-regression contender(s) across all \(evalTargets.count) targets for stability:")
+        emit("\nVerifying \(topContenders.count) top contender(s) across all \(activeEvalTargets.count) targets for stability:")
 
         var verifiedScores = [Phase1Score]()
         for (idx, contender) in topContenders.enumerated() {
@@ -1144,7 +1156,7 @@ public final class StrategyOptimizer {
             guard let testProc = spawnTestCiadpi(profile: contender.profile, port: stage2Port) else { continue }
             setActiveTestProcess(testProc, for: stage2Port)
 
-            var fullResults = probeConcurrently(targets: evalTargets, socksPort: stage2Port, timeout: 2.5, attempts: 2)
+            var fullResults = probeConcurrently(targets: activeEvalTargets, socksPort: stage2Port, timeout: 2.5, attempts: 2)
 
             // Tiebreaker probe if a baseline-reachable target succeeded 1/2 attempts
             for i in 0..<fullResults.count {
@@ -1193,7 +1205,7 @@ public final class StrategyOptimizer {
                 profile: contender.profile,
                 unlockedCount: unlockedCount,
                 reachableCount: totalReachable,
-                totalTargets: evalTargets.count,
+                totalTargets: activeEvalTargets.count,
                 averageLatencyMs: avgLat,
                 timeouts: timeouts,
                 customTargetsPassed: customPassed,
@@ -1209,41 +1221,47 @@ public final class StrategyOptimizer {
             if !regressions.isEmpty {
                 regStatus = " \u{001B}[31m(-\(regressions.count) regressed)\u{001B}[0m"
             }
-            let statusSuffix = "\(totalReachable)/\(evalTargets.count) verified (\(unlockColor)+\(unlockedCount) unlocked\u{001B}[0m)\(regStatus) (\(avgLat)ms)"
+            let statusSuffix = "\(totalReachable)/\(activeEvalTargets.count) verified (\(unlockColor)+\(unlockedCount) unlocked\u{001B}[0m)\(regStatus) (\(avgLat)ms)"
             emit("  [\(idx + 1)/\(topContenders.count)] \(paddedId) \(statusSuffix)")
         }
 
-        let ranked = verifiedScores
-            .filter { $0.regressionCount == 0 }
-            .sorted { a, b in
-                if a.customTargetsPassed != b.customTargetsPassed {
-                    return a.customTargetsPassed > b.customTargetsPassed
-                }
-                if a.unlockedCount != b.unlockedCount {
-                    return a.unlockedCount > b.unlockedCount
-                }
-                if a.reachableCount != b.reachableCount {
-                    return a.reachableCount > b.reachableCount
-                }
-                if a.timeouts != b.timeouts {
-                    return a.timeouts < b.timeouts
-                }
-                if a.averageLatencyMs != b.averageLatencyMs {
-                    return a.averageLatencyMs < b.averageLatencyMs
-                }
-                return a.profile.complexity < b.profile.complexity
+        let referenceSafeVerified = verifiedScores.filter { score in
+            !score.regressionHosts.contains(where: { referenceHosts.contains($0) })
+        }
+
+        let ranked = (referenceSafeVerified.isEmpty ? verifiedScores : referenceSafeVerified).sorted { a, b in
+            if a.customTargetsPassed != b.customTargetsPassed {
+                return a.customTargetsPassed > b.customTargetsPassed
             }
+            if a.unlockedCount != b.unlockedCount {
+                return a.unlockedCount > b.unlockedCount
+            }
+            if a.regressionCount != b.regressionCount {
+                return a.regressionCount < b.regressionCount
+            }
+            if a.reachableCount != b.reachableCount {
+                return a.reachableCount > b.reachableCount
+            }
+            if a.timeouts != b.timeouts {
+                return a.timeouts < b.timeouts
+            }
+            if a.averageLatencyMs != b.averageLatencyMs {
+                return a.averageLatencyMs < b.averageLatencyMs
+            }
+            return a.profile.complexity < b.profile.complexity
+        }
 
         guard let winner = ranked.first ?? rankedContenders.first else {
-            emit("\n\u{001B}[33mWarning:\u{001B}[0m No profile satisfied zero-regression criteria in full verification.")
+            emit("\n\u{001B}[33mWarning:\u{001B}[0m No profile satisfied DPI evasion in full verification.")
             return StrategyProfiles.defaultProfile
         }
 
+        let regText = winner.regressionCount == 0 ? "0 regressions" : "\(winner.regressionCount) regression(s)"
         emit("\n\u{001B}[32m✓ Selected:\u{001B}[0m \u{001B}[1m\(winner.profile.id)\u{001B}[0m (\(winner.profile.name))")
         emit("  Family:      \(winner.profile.family)")
         emit("  Description: \(winner.profile.description)")
         emit("  Parameters:  \(winner.profile.args.joined(separator: " "))")
-        emit("  Reliability: \(winner.reachableCount)/\(winner.totalTargets) targets passed both probes (0 regressions)")
+        emit("  Reliability: \(winner.reachableCount)/\(winner.totalTargets) targets passed (\(regText))")
         emit("  Avg Latency: \(winner.averageLatencyMs)ms\n")
 
         return winner.profile
