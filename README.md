@@ -92,8 +92,9 @@ routun policy show
 
 # Manage built-in offline service groups (6 curated groups)
 routun group list
-routun group enable social
+routun group enable telegram
 routun group disable social
+routun group enable social telegram cloudflare
 
 # Add custom domain includes or overrides
 routun policy include subscene.best
@@ -120,11 +121,11 @@ routun policy quic scoped
 | Group ID | Description | Default Status |
 | :--- | :--- | :--- |
 | `general` | General web services and repositories affected by regional censorship (Archive.org, Tor, DW, etc.) | **Enabled** |
-| `social` | Social networks and messaging (Discord, Instagram, X/Twitter, Facebook, etc.) | Disabled |
+| `social` | Social networks and messaging (Discord, Instagram, X/Twitter, Facebook, etc.) | **Enabled** |
 | `turkiye` | Services blocked by regional administrative/court orders (Roblox, Discord, Wattpad, etc.) | **Enabled** |
 | `youtube` | YouTube playback, thumbnails, and streaming infrastructure | **Enabled** |
 | `telegram` | Telegram Web and official messaging domains | Disabled |
-| `cloudflare` | Cloudflare edge endpoints and Encrypted ClientHello (ECH) | Disabled |
+| `cloudflare` | Cloudflare edge endpoints and Encrypted ClientHello (ECH) | **Enabled** |
 
 ### Scoped QUIC / HTTP/3 Handling
 
