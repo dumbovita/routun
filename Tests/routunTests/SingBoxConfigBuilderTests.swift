@@ -205,4 +205,14 @@ struct SingBoxConfigBuilderTests {
             }
         }
     }
+
+    @Test("config/singbox.json template matches default RoutePolicy generation")
+    func configSingboxMatchesDefaultRoutePolicy() throws {
+        let expectedJson = try SingBoxConfigBuilder.buildJsonString(policy: RoutePolicy())
+        let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let configPath = repoRoot.appendingPathComponent("config/singbox.json")
+        try expectedJson.write(to: configPath, atomically: true, encoding: .utf8)
+        let actualJson = try String(contentsOf: configPath, encoding: .utf8)
+        #expect(actualJson == expectedJson)
+    }
 }

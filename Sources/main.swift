@@ -1,6 +1,6 @@
 import Foundation
 
-let version = "1.4.1"
+let version = "1.4.2"
 
 func printUsage() {
     print("""
@@ -14,8 +14,8 @@ func printUsage() {
       start           Start the routun LaunchDaemon background service (requires sudo)
       stop            Stop the routun LaunchDaemon background service (requires sudo)
       restart         Restart the service and cleanly refresh network routing (requires sudo)
-      group           Manage built-in service groups (list, enable <name>, disable <name>)
-      policy          Manage route policy (show, mode <selective|global>, quic <scoped|blocked|direct>, include <domain>, exclude <domain>)
+      group           Manage built-in service groups (list, enable <name ...>, disable <name ...>)
+      policy          Manage route policy (show, mode <selective|global>, quic <scoped|blocked|direct>, ipv6 <enable|disable>, dns <disabled|doh>, include <domain>, exclude <domain>)
       optimize        Run automated DPI evasion optimization (supports -v, -q, and custom domains)
       profile         View or switch ByeDPI strategy profiles (list [--all], set <name>, show)
       logs            Display unified service logs (supports -f/--follow, -n <lines>, -e/--error)
@@ -29,9 +29,10 @@ func printUsage() {
     Examples:
       routun status
       routun group list
-      routun group enable social
+      routun group enable social telegram
       routun policy show
       routun policy mode selective
+      routun policy ipv6 disable
       routun policy include example.org
       routun optimize
       routun optimize --quick
@@ -70,8 +71,8 @@ case "restart":
 
 case "group":
     let subAction = args.count > 2 ? args[2] : nil
-    let groupName = args.count > 3 ? args[3] : nil
-    RoutunCommands.group(action: subAction, name: groupName)
+    let groupNames = args.count > 3 ? Array(args[3...]) : []
+    RoutunCommands.group(action: subAction, names: groupNames)
 
 case "policy":
     let subAction = args.count > 2 ? args[2] : nil

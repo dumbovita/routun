@@ -17,12 +17,12 @@ struct ServiceGroupCatalogTests {
     @Test("Default enabled status matches expected policy defaults")
     func defaultEnabledStatus() {
         #expect(ServiceGroupCatalog.general.defaultEnabled == true)
+        #expect(ServiceGroupCatalog.social.defaultEnabled == true)
         #expect(ServiceGroupCatalog.turkiye.defaultEnabled == true)
         #expect(ServiceGroupCatalog.youtube.defaultEnabled == true)
+        #expect(ServiceGroupCatalog.cloudflare.defaultEnabled == true)
 
-        #expect(ServiceGroupCatalog.social.defaultEnabled == false)
         #expect(ServiceGroupCatalog.telegram.defaultEnabled == false)
-        #expect(ServiceGroupCatalog.cloudflare.defaultEnabled == false)
     }
 
     @Test("Domain normalization strips schemes, paths, ports, wildcards, and trims whitespace")

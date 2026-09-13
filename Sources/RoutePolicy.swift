@@ -37,7 +37,7 @@ public struct RoutePolicy: Codable, Equatable {
         mode: RoutingMode = .selective,
         quicMode: QUICMode = .scoped,
         dnsMode: DNSMode = .disabled,
-        enableIPv6: Bool = true,
+        enableIPv6: Bool = false,
         groupPreferences: [String: Bool] = [:],
         customInclude: [String] = [],
         customExclude: [String] = []

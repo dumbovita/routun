@@ -19,7 +19,7 @@
   "custom_exclude": [],
   "custom_include": [],
   "dns_mode": "disabled",
-  "enable_ipv6": true,
+  "enable_ipv6": false,
   "group_preferences": {},
   "quic_mode": "scoped",
   "routing_mode": "selective",

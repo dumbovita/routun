@@ -39,7 +39,7 @@ struct ConfigMigrationTests {
         #expect(config.routingMode == .selective)
         #expect(config.quicMode == .scoped)
         #expect(config.dnsMode == .disabled)
-        #expect(config.enableIPv6 == true)
+        #expect(config.enableIPv6 == false)
         #expect(config.groupPreferences.isEmpty)
         #expect(config.customInclude.isEmpty)
         #expect(config.customExclude.isEmpty)
@@ -101,7 +101,7 @@ struct ConfigMigrationTests {
         #expect(config.routingMode == .selective)
         #expect(config.quicMode == .scoped)
         #expect(config.dnsMode == .disabled)
-        #expect(config.enableIPv6 == true)
+        #expect(config.enableIPv6 == false)
         #expect(!config.ciadpiArgs.contains("-t"))
     }
 }

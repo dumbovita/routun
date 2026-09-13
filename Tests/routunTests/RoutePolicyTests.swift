@@ -4,13 +4,13 @@ import Testing
 
 @Suite("Route Policy Tests")
 struct RoutePolicyTests {
-    @Test("Default RoutePolicy has selective mode, scoped QUIC, IPv6 enabled, and empty custom overrides")
+    @Test("Default RoutePolicy has selective mode, scoped QUIC, IPv6 disabled, and empty custom overrides")
     func defaultPolicyValues() {
         let policy = RoutePolicy()
         #expect(policy.mode == .selective)
         #expect(policy.quicMode == .scoped)
         #expect(policy.dnsMode == .disabled)
-        #expect(policy.enableIPv6 == true)
+        #expect(policy.enableIPv6 == false)
         #expect(policy.groupPreferences.isEmpty)
         #expect(policy.customInclude.isEmpty)
         #expect(policy.customExclude.isEmpty)
@@ -22,11 +22,13 @@ struct RoutePolicyTests {
 
         // Unset preferences fall back to catalog defaults
         #expect(policy.isGroupEnabled(ServiceGroupCatalog.turkiye) == true)
-        #expect(policy.isGroupEnabled(ServiceGroupCatalog.social) == false)
-
-        // Explicit override: enable social
-        policy.setGroupEnabled("social", enabled: true)
         #expect(policy.isGroupEnabled(ServiceGroupCatalog.social) == true)
+        #expect(policy.isGroupEnabled(ServiceGroupCatalog.cloudflare) == true)
+        #expect(policy.isGroupEnabled(ServiceGroupCatalog.telegram) == false)
+
+        // Explicit override: enable telegram
+        policy.setGroupEnabled("telegram", enabled: true)
+        #expect(policy.isGroupEnabled(ServiceGroupCatalog.telegram) == true)
 
         // Explicit override: disable turkiye
         policy.setGroupEnabled("turkiye", enabled: false)
@@ -60,12 +62,12 @@ struct RoutePolicyTests {
     func enablingGroupAddsDomains() {
         var policy = RoutePolicy()
         let initialTargets = policy.resolveTargets().bypassedSuffixes
-        #expect(!initialTargets.contains("instagram.com"))
+        #expect(!initialTargets.contains("telegram.org"))
 
-        policy.setGroupEnabled("social", enabled: true)
+        policy.setGroupEnabled("telegram", enabled: true)
         let updatedTargets = policy.resolveTargets().bypassedSuffixes
-        #expect(updatedTargets.contains("instagram.com"))
-        #expect(updatedTargets.contains("facebook.com"))
+        #expect(updatedTargets.contains("telegram.org"))
+        #expect(updatedTargets.contains("t.me"))
     }
 
     @Test("Codable serialization and deserialization round-trip preserves all policy fields")

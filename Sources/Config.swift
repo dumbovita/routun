@@ -45,7 +45,7 @@ public struct RoutunConfig: Codable, Equatable {
         routingMode: RoutingMode = .selective,
         quicMode: QUICMode = .scoped,
         dnsMode: DNSMode = .disabled,
-        enableIPv6: Bool = true,
+        enableIPv6: Bool = false,
         groupPreferences: [String: Bool] = [:],
         customInclude: [String] = [],
         customExclude: [String] = []
@@ -78,7 +78,7 @@ public struct RoutunConfig: Codable, Equatable {
         self.routingMode = try container.decodeIfPresent(RoutingMode.self, forKey: .routingMode) ?? .selective
         self.quicMode = try container.decodeIfPresent(QUICMode.self, forKey: .quicMode) ?? .scoped
         self.dnsMode = try container.decodeIfPresent(DNSMode.self, forKey: .dnsMode) ?? .disabled
-        self.enableIPv6 = try container.decodeIfPresent(Bool.self, forKey: .enableIPv6) ?? true
+        self.enableIPv6 = try container.decodeIfPresent(Bool.self, forKey: .enableIPv6) ?? false
         self.groupPreferences = try container.decodeIfPresent([String: Bool].self, forKey: .groupPreferences) ?? [:]
         let rawInclude = try container.decodeIfPresent([String].self, forKey: .customInclude) ?? []
         let rawExclude = try container.decodeIfPresent([String].self, forKey: .customExclude) ?? []
@@ -236,7 +236,7 @@ public struct RoutunConfig: Codable, Equatable {
             routingMode: .selective,
             quicMode: .scoped,
             dnsMode: .disabled,
-            enableIPv6: true,
+            enableIPv6: false,
             groupPreferences: [:],
             customInclude: [],
             customExclude: []

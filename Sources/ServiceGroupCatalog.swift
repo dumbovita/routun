@@ -108,7 +108,10 @@ public enum ServiceGroupCatalog {
             "rutracker.org",
             "nyaa.si",
             "rutor.org",
-            "nnmclub.to"
+            "nnmclub.to",
+            "archive.org",
+            "torproject.org",
+            "dw.com"
         ]
     )
 
@@ -116,9 +119,20 @@ public enum ServiceGroupCatalog {
     public static let social = ServiceGroup(
         id: "social",
         name: "Social Networks",
-        description: "Social media and messaging web platforms (Instagram, Twitter/X, Facebook, etc.)",
-        defaultEnabled: false,
+        description: "Social media and messaging web platforms (Discord, Instagram, Twitter/X, Facebook, etc.)",
+        defaultEnabled: true,
         domainSuffixes: [
+            "discord.com",
+            "discord.gg",
+            "discord.media",
+            "discordapp.com",
+            "discordapp.net",
+            "discordcdn.com",
+            "discord.dev",
+            "discord.new",
+            "discord.gift",
+            "discordstatus.com",
+            "dis.gd",
             "facebook.com",
             "fb.com",
             "fb.me",
@@ -135,7 +149,9 @@ public enum ServiceGroupCatalog {
             "twimg.com",
             "soundcloud.com",
             "medium.com",
-            "proton.me"
+            "proton.me",
+            "protonmail.com",
+            "protonvpn.com"
         ]
     )
 
@@ -143,15 +159,33 @@ public enum ServiceGroupCatalog {
     public static let turkiye = ServiceGroup(
         id: "turkiye",
         name: "Türkiye Regional Blocks",
-        description: "Services and domains blocked by Turkish administrative and court orders (Roblox, Wattpad, etc.)",
+        description: "Services and domains blocked by Turkish administrative and court orders (Roblox, Discord, Wattpad, etc.)",
         defaultEnabled: true,
         domainSuffixes: [
+            // Gaming & Community
             "roblox.com",
             "rbxcdn.com",
+            "rbx.com",
+            "rblx.org",
+            "robloxlabs.com",
+            "discord.com",
+            "discord.gg",
+            "discord.media",
+            "discordapp.com",
+            "discordapp.net",
+            "discordcdn.com",
+            "discord.dev",
+            "discord.new",
+            "discord.gift",
+            "discordstatus.com",
+            "dis.gd",
+            // Publishing & Paste
             "wattpad.com",
             "pastebin.com",
+            // File sharing & Leaks
             "4shared.com",
             "wikileaks.org",
+            // URL shorteners commonly restricted
             "bitly.com",
             "cutt.ly",
             "t2m.io"
@@ -195,7 +229,7 @@ public enum ServiceGroupCatalog {
         id: "cloudflare",
         name: "Cloudflare & ECH",
         description: "Cloudflare network edges and Encrypted ClientHello endpoints",
-        defaultEnabled: false,
+        defaultEnabled: true,
         domainSuffixes: [
             "cloudflare.com",
             "cloudflare.net",

@@ -1,120 +1,199 @@
 {
-  "$schema": "https://sing-box.sagernet.org/schema.json",
-  "inbounds": [
+  "$schema" : "https:\/\/sing-box.sagernet.org\/schema.json",
+  "inbounds" : [
     {
-      "address": [
-        "172.19.0.1/30",
-        "fdfe:dcba:9876::1/126"
+      "address" : [
+        "172.19.0.1\/30"
       ],
-      "auto_route": true,
-      "dns_mode": "disabled",
-      "stack": "system",
-      "strict_route": true,
-      "tag": "tun-in",
-      "type": "tun"
+      "auto_route" : true,
+      "dns_mode" : "disabled",
+      "stack" : "system",
+      "strict_route" : true,
+      "tag" : "tun-in",
+      "type" : "tun"
     }
   ],
-  "log": {
-    "level": "info",
-    "timestamp": true
+  "log" : {
+    "level" : "info",
+    "timestamp" : true
   },
-  "outbounds": [
+  "outbounds" : [
     {
-      "server": "127.0.0.1",
-      "server_port": 1080,
-      "tag": "byedpi-out",
-      "type": "socks"
+      "server" : "127.0.0.1",
+      "server_port" : 1080,
+      "tag" : "byedpi-out",
+      "type" : "socks"
     },
     {
-      "tag": "direct",
-      "type": "direct"
+      "tag" : "direct",
+      "type" : "direct"
     }
   ],
-  "route": {
-    "auto_detect_interface": true,
-    "final": "direct",
-    "rules": [
+  "route" : {
+    "auto_detect_interface" : true,
+    "final" : "direct",
+    "rules" : [
       {
-        "action": "sniff",
-        "sniffer": [
+        "action" : "sniff",
+        "sniffer" : [
           "tls",
           "http",
           "quic"
         ],
-        "timeout": "500ms"
+        "timeout" : "500ms"
       },
       {
-        "action": "route",
-        "outbound": "direct",
-        "process_name": [
+        "action" : "route",
+        "outbound" : "direct",
+        "process_name" : [
           "ciadpi",
           "sing-box"
         ]
       },
       {
-        "action": "route",
-        "ip_is_private": true,
-        "outbound": "direct"
+        "action" : "route",
+        "ip_is_private" : true,
+        "outbound" : "direct"
       },
       {
-        "action": "reject",
-        "domain_suffix": [
+        "action" : "reject",
+        "domain_suffix" : [
           "4shared.com",
+          "archive.org",
           "bitly.com",
+          "cdninstagram.com",
+          "cloudflare-ech.com",
+          "cloudflare.com",
+          "cloudflare.net",
+          "cloudflarecn.net",
           "cutt.ly",
+          "dis.gd",
+          "discord.com",
+          "discord.dev",
+          "discord.gg",
+          "discord.gift",
+          "discord.media",
+          "discord.new",
+          "discordapp.com",
+          "discordapp.net",
+          "discordcdn.com",
+          "discordstatus.com",
+          "dw.com",
+          "facebook.com",
+          "fb.com",
+          "fb.me",
+          "fbcdn.net",
           "ggpht.com",
           "googlevideo.com",
+          "instagram.com",
+          "linkedin.com",
+          "medium.com",
+          "messenger.com",
+          "meta.com",
           "nnmclub.to",
           "nyaa.si",
           "pastebin.com",
+          "proton.me",
+          "protonmail.com",
+          "protonvpn.com",
+          "rblx.org",
+          "rbx.com",
           "rbxcdn.com",
           "roblox.com",
+          "robloxlabs.com",
           "rutor.org",
           "rutracker.org",
+          "snap.com",
+          "snapchat.com",
+          "soundcloud.com",
           "t2m.io",
+          "torproject.org",
+          "twimg.com",
+          "twitter.com",
           "wattpad.com",
           "wikileaks.org",
+          "x.com",
           "youtu.be",
           "youtube.com",
           "youtubei.googleapis.com",
           "ytimg.com"
         ],
-        "method": "default",
-        "network": "udp",
-        "no_drop": true,
-        "port": 443
+        "method" : "default",
+        "network" : "udp",
+        "no_drop" : true,
+        "port" : 443
       },
       {
-        "action": "route",
-        "network": "udp",
-        "outbound": "direct"
+        "action" : "route",
+        "network" : "udp",
+        "outbound" : "direct"
       },
       {
-        "action": "route",
-        "domain_suffix": [
+        "action" : "route",
+        "domain_suffix" : [
           "4shared.com",
+          "archive.org",
           "bitly.com",
+          "cdninstagram.com",
+          "cloudflare-ech.com",
+          "cloudflare.com",
+          "cloudflare.net",
+          "cloudflarecn.net",
           "cutt.ly",
+          "dis.gd",
+          "discord.com",
+          "discord.dev",
+          "discord.gg",
+          "discord.gift",
+          "discord.media",
+          "discord.new",
+          "discordapp.com",
+          "discordapp.net",
+          "discordcdn.com",
+          "discordstatus.com",
+          "dw.com",
+          "facebook.com",
+          "fb.com",
+          "fb.me",
+          "fbcdn.net",
           "ggpht.com",
           "googlevideo.com",
+          "instagram.com",
+          "linkedin.com",
+          "medium.com",
+          "messenger.com",
+          "meta.com",
           "nnmclub.to",
           "nyaa.si",
           "pastebin.com",
+          "proton.me",
+          "protonmail.com",
+          "protonvpn.com",
+          "rblx.org",
+          "rbx.com",
           "rbxcdn.com",
           "roblox.com",
+          "robloxlabs.com",
           "rutor.org",
           "rutracker.org",
+          "snap.com",
+          "snapchat.com",
+          "soundcloud.com",
           "t2m.io",
+          "torproject.org",
+          "twimg.com",
+          "twitter.com",
           "wattpad.com",
           "wikileaks.org",
+          "x.com",
           "youtu.be",
           "youtube.com",
           "youtubei.googleapis.com",
           "ytimg.com"
         ],
-        "network": "tcp",
-        "outbound": "byedpi-out",
-        "port": [
+        "network" : "tcp",
+        "outbound" : "byedpi-out",
+        "port" : [
           80,
           443
         ]

@@ -456,6 +456,10 @@ public final class RoutunCommands {
     }
 
     public static func group(action: String?, name: String?) {
+        group(action: action, names: name.map { [$0] } ?? [])
+    }
+
+    public static func group(action: String?, names: [String]) {
         var config = RoutunConfig.load()
         let policy = config.routePolicy
 
@@ -471,37 +475,45 @@ public final class RoutunCommands {
                 print("  [\(statusTag)] \(bold)\(paddedId)\(reset) (\(count) suffixes) - \(group.description)")
             }
             print("------------------------------------------------------------")
-            print("To enable a group:  \(bold)routun group enable <name>\(reset)")
-            print("To disable a group: \(bold)routun group disable <name>\(reset)")
+            print("To enable group(s):  \(bold)routun group enable <name ...>\(reset)")
+            print("To disable group(s): \(bold)routun group disable <name ...>\(reset)")
 
         case "enable":
-            guard let groupId = name?.lowercased(), !groupId.isEmpty else {
-                print("\(red)Error:\(reset) Please specify a group name to enable.")
+            guard !names.isEmpty else {
+                print("\(red)Error:\(reset) Please specify at least one group name to enable.")
                 exit(1)
             }
-            guard let group = ServiceGroupCatalog.find(byId: groupId) else {
-                print("\(red)Error:\(reset) Unknown group '\(groupId)'. Available groups: \(ServiceGroupCatalog.builtInGroups.map(\.id).joined(separator: ", "))")
-                exit(1)
+            var enabledDescriptions = [String]()
+            for rawName in names {
+                let groupId = rawName.lowercased()
+                guard let group = ServiceGroupCatalog.find(byId: groupId) else {
+                    print("\(red)Error:\(reset) Unknown group '\(groupId)'. Available groups: \(ServiceGroupCatalog.builtInGroups.map(\.id).joined(separator: ", "))")
+                    exit(1)
+                }
+                config.groupPreferences[group.id] = true
+                enabledDescriptions.append("'\(group.id)' (\(group.name))")
             }
-
-            config.groupPreferences[group.id] = true
-            applyConfigUpdate(&config, message: "Enabled group '\(group.id)' (\(group.name)).")
+            applyConfigUpdate(&config, message: "Enabled group(s): \(enabledDescriptions.joined(separator: ", ")).")
 
         case "disable":
-            guard let groupId = name?.lowercased(), !groupId.isEmpty else {
-                print("\(red)Error:\(reset) Please specify a group name to disable.")
+            guard !names.isEmpty else {
+                print("\(red)Error:\(reset) Please specify at least one group name to disable.")
                 exit(1)
             }
-            guard let group = ServiceGroupCatalog.find(byId: groupId) else {
-                print("\(red)Error:\(reset) Unknown group '\(groupId)'. Available groups: \(ServiceGroupCatalog.builtInGroups.map(\.id).joined(separator: ", "))")
-                exit(1)
+            var disabledDescriptions = [String]()
+            for rawName in names {
+                let groupId = rawName.lowercased()
+                guard let group = ServiceGroupCatalog.find(byId: groupId) else {
+                    print("\(red)Error:\(reset) Unknown group '\(groupId)'. Available groups: \(ServiceGroupCatalog.builtInGroups.map(\.id).joined(separator: ", "))")
+                    exit(1)
+                }
+                config.groupPreferences[group.id] = false
+                disabledDescriptions.append("'\(group.id)' (\(group.name))")
             }
-
-            config.groupPreferences[group.id] = false
-            applyConfigUpdate(&config, message: "Disabled group '\(group.id)' (\(group.name)).")
+            applyConfigUpdate(&config, message: "Disabled group(s): \(disabledDescriptions.joined(separator: ", ")).")
 
         default:
-            print("\(red)Error:\(reset) Unknown group action '\(action!)'. Use 'list', 'enable <name>', or 'disable <name>'.")
+            print("\(red)Error:\(reset) Unknown group action '\(action!)'. Use 'list', 'enable <name ...>', or 'disable <name ...>'.")
             exit(1)
         }
     }
@@ -530,6 +542,8 @@ public final class RoutunCommands {
             print("Usage:")
             print("  routun policy mode <selective|global>")
             print("  routun policy quic <scoped|blocked|direct>")
+            print("  routun policy ipv6 <enable|disable>")
+            print("  routun policy dns <disabled|doh>")
             print("  routun policy include <domain>")
             print("  routun policy exclude <domain>")
             print("  routun policy remove <include|exclude> <domain>")
@@ -549,6 +563,30 @@ public final class RoutunCommands {
             }
             config.quicMode = quic
             applyConfigUpdate(&config, message: "QUIC mode changed to '\(quic.rawValue)'.")
+
+        case "ipv6":
+            guard let ipv6Str = subAction?.lowercased() else {
+                print("\(red)Error:\(reset) Usage: routun policy ipv6 <enable|disable>")
+                exit(1)
+            }
+            if ["enable", "true", "on", "1"].contains(ipv6Str) {
+                config.enableIPv6 = true
+                applyConfigUpdate(&config, message: "IPv6 interception enabled.")
+            } else if ["disable", "false", "off", "0"].contains(ipv6Str) {
+                config.enableIPv6 = false
+                applyConfigUpdate(&config, message: "IPv6 interception disabled.")
+            } else {
+                print("\(red)Error:\(reset) Invalid IPv6 option '\(subAction ?? "")'. Choose 'enable' or 'disable'.")
+                exit(1)
+            }
+
+        case "dns":
+            guard let dnsStr = subAction?.lowercased(), let dns = DNSMode(rawValue: dnsStr) else {
+                print("\(red)Error:\(reset) Invalid DNS mode. Choose 'disabled' or 'doh'.")
+                exit(1)
+            }
+            config.dnsMode = dns
+            applyConfigUpdate(&config, message: "DNS mode changed to '\(dns.rawValue)'.")
 
         case "include":
             guard let raw = subAction, let domain = ServiceGroupCatalog.normalizeDomain(raw) else {

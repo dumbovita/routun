@@ -103,6 +103,14 @@ routun policy exclude internal.corp.net
 routun policy mode selective
 routun policy mode global
 
+# Configure IPv6 interception (disabled by default to prevent IPv6 blackholing)
+routun policy ipv6 disable
+routun policy ipv6 enable
+
+# Configure DoH / DNS handling (disabled or doh)
+routun policy dns disabled
+routun policy dns doh
+
 # Configure QUIC / HTTP/3 handling (scoped, blocked, or direct)
 routun policy quic scoped
 ```
@@ -111,9 +119,9 @@ routun policy quic scoped
 
 | Group ID | Description | Default Status |
 | :--- | :--- | :--- |
-| `general` | General web services and repositories affected by regional censorship | **Enabled** |
-| `social` | Social networks and messaging (Instagram, X/Twitter, Facebook, etc.) | Disabled |
-| `turkiye` | Services blocked by regional administrative/court orders (Roblox, Wattpad, etc.) | **Enabled** |
+| `general` | General web services and repositories affected by regional censorship (Archive.org, Tor, DW, etc.) | **Enabled** |
+| `social` | Social networks and messaging (Discord, Instagram, X/Twitter, Facebook, etc.) | Disabled |
+| `turkiye` | Services blocked by regional administrative/court orders (Roblox, Discord, Wattpad, etc.) | **Enabled** |
 | `youtube` | YouTube playback, thumbnails, and streaming infrastructure | **Enabled** |
 | `telegram` | Telegram Web and official messaging domains | Disabled |
 | `cloudflare` | Cloudflare edge endpoints and Encrypted ClientHello (ECH) | Disabled |
