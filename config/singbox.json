@@ -1,79 +1,124 @@
 {
   "$schema": "https://sing-box.sagernet.org/schema.json",
+  "inbounds": [
+    {
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "dns_mode": "disabled",
+      "stack": "system",
+      "strict_route": true,
+      "tag": "tun-in",
+      "type": "tun"
+    }
+  ],
   "log": {
     "level": "info",
     "timestamp": true
   },
-  "inbounds": [
-    {
-      "type": "tun",
-      "tag": "tun-in",
-      "address": [
-        "172.19.0.1/30"
-      ],
-      "auto_route": true,
-      "strict_route": true,
-      "stack": "system",
-      "dns_mode": "disabled"
-    }
-  ],
   "outbounds": [
     {
-      "type": "socks",
-      "tag": "byedpi-out",
       "server": "127.0.0.1",
-      "server_port": 1080
+      "server_port": 1080,
+      "tag": "byedpi-out",
+      "type": "socks"
     },
     {
-      "type": "direct",
-      "tag": "direct"
+      "tag": "direct",
+      "type": "direct"
     }
   ],
   "route": {
+    "auto_detect_interface": true,
+    "final": "direct",
     "rules": [
       {
         "action": "sniff",
         "sniffer": [
           "tls",
-          "http"
+          "http",
+          "quic"
         ],
         "timeout": "500ms"
       },
       {
+        "action": "route",
+        "outbound": "direct",
         "process_name": [
-          "ciadpi"
-        ],
-        "action": "route",
-        "outbound": "direct"
+          "ciadpi",
+          "sing-box"
+        ]
       },
       {
+        "action": "route",
         "ip_is_private": true,
-        "action": "route",
         "outbound": "direct"
       },
       {
-        "network": "udp",
-        "port": 443,
         "action": "reject",
+        "domain_suffix": [
+          "4shared.com",
+          "bitly.com",
+          "cutt.ly",
+          "ggpht.com",
+          "googlevideo.com",
+          "nnmclub.to",
+          "nyaa.si",
+          "pastebin.com",
+          "rbxcdn.com",
+          "roblox.com",
+          "rutor.org",
+          "rutracker.org",
+          "t2m.io",
+          "wattpad.com",
+          "wikileaks.org",
+          "youtu.be",
+          "youtube.com",
+          "youtubei.googleapis.com",
+          "ytimg.com"
+        ],
         "method": "default",
-        "no_drop": true
+        "network": "udp",
+        "no_drop": true,
+        "port": 443
       },
       {
-        "network": "udp",
         "action": "route",
+        "network": "udp",
         "outbound": "direct"
       },
       {
+        "action": "route",
+        "domain_suffix": [
+          "4shared.com",
+          "bitly.com",
+          "cutt.ly",
+          "ggpht.com",
+          "googlevideo.com",
+          "nnmclub.to",
+          "nyaa.si",
+          "pastebin.com",
+          "rbxcdn.com",
+          "roblox.com",
+          "rutor.org",
+          "rutracker.org",
+          "t2m.io",
+          "wattpad.com",
+          "wikileaks.org",
+          "youtu.be",
+          "youtube.com",
+          "youtubei.googleapis.com",
+          "ytimg.com"
+        ],
         "network": "tcp",
+        "outbound": "byedpi-out",
         "port": [
           80,
           443
-        ],
-        "action": "route",
-        "outbound": "byedpi-out"
+        ]
       }
-    ],
-    "final": "direct",
-    "auto_detect_interface": true
+    ]
   }
 }

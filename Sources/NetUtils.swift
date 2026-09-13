@@ -49,10 +49,21 @@ public final class NetUtils {
         return false
     }
 
-    public static func getInterfaceInfo(name: String) -> (exists: Bool, isUp: Bool, ip: String?) {
+    public static func waitForPortToClose(host: String = "127.0.0.1", port: Int, timeout: TimeInterval = 0.5) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if !isPortOpen(host: host, port: port, timeout: 0.02) {
+                return true
+            }
+            usleep(10_000)
+        }
+        return !isPortOpen(host: host, port: port, timeout: 0.02)
+    }
+
+    public static func getInterfaceInfo(name: String) -> (exists: Bool, isUp: Bool, ip: String?, ipv6: String?) {
         var ifap: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifap) == 0, let first = ifap else {
-            return (false, false, nil)
+            return (false, false, nil, nil)
         }
         defer { freeifaddrs(ifap) }
 
@@ -60,6 +71,7 @@ public final class NetUtils {
         var found = false
         var isUp = false
         var ipStr: String?
+        var ipv6Str: String?
 
         while let curr = current {
             let ifaName = String(cString: curr.pointee.ifa_name)
@@ -69,22 +81,38 @@ public final class NetUtils {
                 if (flags & UInt32(IFF_UP)) != 0 {
                     isUp = true
                 }
-                if let addr = curr.pointee.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) {
-                    var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-                    addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
-                        var sinAddr = sin.pointee.sin_addr
-                        _ = inet_ntop(AF_INET, &sinAddr, &buffer, socklen_t(INET_ADDRSTRLEN))
+                if let addr = curr.pointee.ifa_addr {
+                    if addr.pointee.sa_family == UInt8(AF_INET) {
+                        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                        addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
+                            var sinAddr = sin.pointee.sin_addr
+                            _ = inet_ntop(AF_INET, &sinAddr, &buffer, socklen_t(INET_ADDRSTRLEN))
+                        }
+                        ipStr = String(cString: buffer)
+                    } else if addr.pointee.sa_family == UInt8(AF_INET6) {
+                        var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+                        addr.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sin6 in
+                            var sin6Addr = sin6.pointee.sin6_addr
+                            _ = inet_ntop(AF_INET6, &sin6Addr, &buffer, socklen_t(INET6_ADDRSTRLEN))
+                        }
+                        let candidate = String(cString: buffer)
+                        // Ignore link-local fe80:: for primary address display
+                        if !candidate.hasPrefix("fe80:") || ipv6Str == nil {
+                            ipv6Str = candidate
+                        }
                     }
-                    ipStr = String(cString: buffer)
                 }
             }
             current = curr.pointee.ifa_next
         }
 
-        return (found, isUp, ipStr)
+        return (found, isUp, ipStr, ipv6Str)
     }
 
-    public static func tunInterface(withIPv4Address targetAddress: String = "172.19.0.1") -> String? {
+    public static func tunInterface(
+        withIPv4Address targetAddress: String = "172.19.0.1",
+        withIPv6Address targetIPv6: String = "fdfe:dcba:9876::1"
+    ) -> String? {
         var ifap: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifap) == 0, let first = ifap else { return nil }
         defer { freeifaddrs(ifap) }
@@ -92,17 +120,28 @@ public final class NetUtils {
         var current: UnsafeMutablePointer<ifaddrs>? = first
         while let interface = current {
             defer { current = interface.pointee.ifa_next }
-            guard let address = interface.pointee.ifa_addr,
-                  address.pointee.sa_family == UInt8(AF_INET) else { continue }
-
-            var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
-            address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
-                var sinAddress = sin.pointee.sin_addr
-                _ = inet_ntop(AF_INET, &sinAddress, &buffer, socklen_t(INET_ADDRSTRLEN))
-            }
+            guard let address = interface.pointee.ifa_addr else { continue }
             let name = String(cString: interface.pointee.ifa_name)
-            if name.hasPrefix("utun"), String(cString: buffer) == targetAddress {
-                return name
+            guard name.hasPrefix("utun") else { continue }
+
+            if address.pointee.sa_family == UInt8(AF_INET) {
+                var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { sin in
+                    var sinAddress = sin.pointee.sin_addr
+                    _ = inet_ntop(AF_INET, &sinAddress, &buffer, socklen_t(INET_ADDRSTRLEN))
+                }
+                if String(cString: buffer) == targetAddress {
+                    return name
+                }
+            } else if address.pointee.sa_family == UInt8(AF_INET6) {
+                var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+                address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { sin6 in
+                    var sin6Address = sin6.pointee.sin6_addr
+                    _ = inet_ntop(AF_INET6, &sin6Address, &buffer, socklen_t(INET6_ADDRSTRLEN))
+                }
+                if String(cString: buffer) == targetIPv6 {
+                    return name
+                }
             }
         }
         return nil

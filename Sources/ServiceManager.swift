@@ -47,6 +47,19 @@ public final class ServiceManager {
         return output.split(separator: " ").last.map(String.init)
     }
 
+    public func syncSingboxConfig(from configuration: RoutunConfig) throws {
+        let data = try SingBoxConfigBuilder.buildJsonData(
+            policy: configuration.routePolicy,
+            socksHost: configuration.socksHost,
+            socksPort: configuration.socksPort
+        )
+        let targetPath = configuration.singboxConfig.isEmpty ? RoutunConfig.defaultSingboxConfigFile : configuration.singboxConfig
+        let parentDir = (targetPath as NSString).deletingLastPathComponent
+        try FileManager.default.createDirectory(atPath: parentDir, withIntermediateDirectories: true)
+        try data.write(to: URL(fileURLWithPath: targetPath), options: .atomic)
+        _ = chmod(targetPath, 0o644)
+    }
+
     public func installAndStart() -> (success: Bool, message: String) {
         let configuration = RoutunConfig.installationConfiguration()
         guard let ciadpiSource = RoutunConfig.dependencySource(named: "ciadpi", configuredPath: configuration.ciadpiPath) else {
@@ -55,9 +68,6 @@ public final class ServiceManager {
         guard let singboxSource = RoutunConfig.dependencySource(named: "sing-box", configuredPath: configuration.singboxPath) else {
             return (false, "sing-box was not found. Install it first, then run sudo routun install.")
         }
-        guard let singboxTemplate = RoutunConfig.singboxTemplatePath(preferredPath: configuration.singboxConfig) else {
-            return (false, "No sing-box configuration template was found. Run this command from the source checkout or install via Homebrew.")
-        }
 
         do {
             try prepareServiceDirectories()
@@ -65,16 +75,15 @@ public final class ServiceManager {
             try installFile(from: ciadpiSource, to: RoutunConfig.serviceCiadpiPath, mode: 0o755)
             try installFile(from: singboxSource, to: RoutunConfig.serviceSingboxPath, mode: 0o755)
 
-            if !FileManager.default.fileExists(atPath: RoutunConfig.defaultSingboxConfigFile) {
-                try installFile(from: singboxTemplate, to: RoutunConfig.defaultSingboxConfigFile, mode: 0o644)
-            } else {
-                try secureRegularFile(at: RoutunConfig.defaultSingboxConfigFile, mode: 0o644)
-            }
-
             var installedConfig = configuration
             installedConfig.ciadpiPath = RoutunConfig.serviceCiadpiPath
             installedConfig.singboxPath = RoutunConfig.serviceSingboxPath
             installedConfig.singboxConfig = RoutunConfig.defaultSingboxConfigFile
+
+            // Generate typed sing-box configuration from active policy
+            try syncSingboxConfig(from: installedConfig)
+            try secureRegularFile(at: RoutunConfig.defaultSingboxConfigFile, mode: 0o644)
+
             try installedConfig.save()
             try secureRegularFile(at: RoutunConfig.defaultConfigFile, mode: 0o644)
 
@@ -83,7 +92,7 @@ public final class ServiceManager {
                 ["check", "-c", RoutunConfig.defaultSingboxConfigFile]
             )
             guard checkCode == 0 else {
-                return (false, "sing-box rejected the copied configuration: \(checkOutput)")
+                return (false, "sing-box rejected the generated configuration: \(checkOutput)")
             }
 
             try writeLaunchDaemonPlist()
@@ -162,16 +171,38 @@ public final class ServiceManager {
     public func terminateRecordedChildren() -> Int {
         guard let state = readState() else { return 0 }
         let children = [
-            (state["singbox_pid"] as? Int, RoutunConfig.serviceSingboxPath, "-TERM"),
-            (state["ciadpi_pid"] as? Int, RoutunConfig.serviceCiadpiPath, "-HUP")
+            (state["singbox_pid"] as? Int, "sing-box", "-TERM"),
+            (state["ciadpi_pid"] as? Int, "ciadpi", "-HUP")
         ]
 
         return children.reduce(into: 0) { count, child in
             guard let pid = child.0, pid > 0 else { return }
             let (code, command) = runCommand("/bin/ps", ["-p", String(pid), "-o", "command="])
-            guard code == 0, command.hasPrefix(child.1) else { return }
+            guard code == 0 else { return }
+            let exec = command.split(separator: " ").first.map(String.init) ?? ""
+            guard exec.hasSuffix("/\(child.1)") || exec == child.1 else { return }
+
             _ = runCommand("/bin/kill", [child.2, String(pid)])
-            count += 1
+
+            // Wait up to 1 second for the process to exit
+            let deadline = Date().addingTimeInterval(1.0)
+            while Date() < deadline && NetUtils.isProcessAlive(pid: pid) {
+                usleep(20_000)
+            }
+            if NetUtils.isProcessAlive(pid: pid) {
+                let (checkCode, checkCommand) = runCommand("/bin/ps", ["-p", String(pid), "-o", "command="])
+                let checkExec = checkCommand.split(separator: " ").first.map(String.init) ?? ""
+                if checkCode == 0 && (checkExec.hasSuffix("/\(child.1)") || checkExec == child.1) {
+                    _ = runCommand("/bin/kill", ["-9", String(pid)])
+                    let killDeadline = Date().addingTimeInterval(0.5)
+                    while Date() < killDeadline && NetUtils.isProcessAlive(pid: pid) {
+                        usleep(20_000)
+                    }
+                }
+            }
+            if !NetUtils.isProcessAlive(pid: pid) {
+                count += 1
+            }
         }
     }
 

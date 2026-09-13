@@ -15,7 +15,13 @@ $(TARGET): $(SOURCES)
 	$(SWIFTC) $(SWIFT_FLAGS) $(SOURCES) -o $(TARGET)
 
 test:
-	swift test
+	@if [ -d /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing ]; then \
+		swift test -Xswiftc -plugin-path -Xswiftc /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing; \
+	elif [ -f /Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib ]; then \
+		swift test -Xswiftc -load-resolved-plugin -Xswiftc '/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib##TestingMacros'; \
+	else \
+		swift test; \
+	fi
 
 install:
 	@./install.sh

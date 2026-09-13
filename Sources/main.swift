@@ -1,6 +1,6 @@
 import Foundation
 
-let version = "1.3.1"
+let version = "1.4.0"
 
 func printUsage() {
     print("""
@@ -14,10 +14,12 @@ func printUsage() {
       start           Start the routun LaunchDaemon background service (requires sudo)
       stop            Stop the routun LaunchDaemon background service (requires sudo)
       restart         Restart the service and cleanly refresh network routing (requires sudo)
-      logs            Display unified service logs (supports -f/--follow, -n <lines>, -e/--error)
-      doctor          Run full system and environment diagnostic checks
+      group           Manage built-in service groups (list, enable <name>, disable <name>)
+      policy          Manage route policy (show, mode <selective|global>, quic <scoped|blocked|direct>, include <domain>, exclude <domain>)
       optimize        Run automated DPI evasion optimization (supports -v, -q, and custom domains)
       profile         View or switch ByeDPI strategy profiles (list [--all], set <name>, show)
+      logs            Display unified service logs (supports -f/--follow, -n <lines>, -e/--error)
+      doctor          Run full system and environment diagnostic checks
       install         Install or update the protected service payload and LaunchDaemon (requires sudo)
       uninstall       Unregister the service and remove its protected payload (requires sudo)
       daemon          Internal: run supervisor daemon in foreground (managed by launchd)
@@ -26,13 +28,17 @@ func printUsage() {
 
     Examples:
       routun status
+      routun group list
+      routun group enable social
+      routun policy show
+      routun policy mode selective
+      routun policy include example.org
       routun optimize
       routun optimize --quick
       routun optimize anadolu.edu.tr saglik.gov.tr
-      routun optimize -v -t discord.com
       routun profile list
       routun profile list --all
-      routun profile set fake-ttl3-disorder-2s
+      routun profile set disorder-split-sni
       sudo routun start
       sudo routun stop
       sudo routun restart
@@ -61,6 +67,17 @@ case "stop":
 
 case "restart":
     RoutunCommands.restart()
+
+case "group":
+    let subAction = args.count > 2 ? args[2] : nil
+    let groupName = args.count > 3 ? args[3] : nil
+    RoutunCommands.group(action: subAction, name: groupName)
+
+case "policy":
+    let subAction = args.count > 2 ? args[2] : nil
+    let param1 = args.count > 3 ? args[3] : nil
+    let param2 = args.count > 4 ? args[4] : nil
+    RoutunCommands.policy(action: subAction, subAction: param1, value: param2)
 
 case "optimize", "blockcheck":
     var verbose = false

@@ -23,6 +23,13 @@ public final class RoutunDaemon {
 
         logger.info("Initializing routun background service supervisor...")
 
+        do {
+            try ServiceManager.shared.syncSingboxConfig(from: config)
+        } catch {
+            logger.error("Failed to synchronize sing-box configuration: \(error.localizedDescription)")
+            exit(1)
+        }
+
         verifyBinariesAndConfig()
         cleanupStaleProcesses()
         cleanupStaleStateFile()
@@ -56,12 +63,30 @@ public final class RoutunDaemon {
             logger.error("sing-box configuration file missing at: \(config.singboxConfig)")
             exit(1)
         }
+
+        let cap = ByeDPICapability.detect(ciadpiPath: config.ciadpiPath)
+        let (profileValid, reasons) = cap.validate(args: config.ciadpiArgs)
+        if !profileValid {
+            logger.warn("ByeDPI configuration contains flags that may be unsupported or inert on macOS: \(reasons.joined(separator: " "))")
+        }
+
+        let (checkCode, checkOutput) = ServiceManager.shared.runCommand(
+            config.singboxPath,
+            ["check", "-c", config.singboxConfig]
+        )
+        guard checkCode == 0 else {
+            logger.error("sing-box configuration check failed: \(checkOutput)")
+            exit(1)
+        }
     }
 
     private func cleanupStaleProcesses() {
         let terminated = ServiceManager.shared.terminateRecordedChildren()
         if terminated > 0 {
             logger.warn("Stopped \(terminated) child process(es) recorded by the previous routun service.")
+            if !NetUtils.waitForPortToClose(host: config.socksHost, port: config.socksPort, timeout: 1.0) {
+                logger.warn("Port \(config.socksPort) remained occupied after terminating previous children.")
+            }
         }
     }
 
@@ -103,7 +128,7 @@ public final class RoutunDaemon {
             logger.info("ByeDPI spawned successfully (PID: \(proc.processIdentifier)).")
         } catch {
             logger.error("Failed to execute ByeDPI: \(error.localizedDescription)")
-            exit(1)
+            emergencyTeardown()
         }
     }
 
@@ -113,7 +138,8 @@ public final class RoutunDaemon {
         for i in 1...maxAttempts {
             guard let proc = ciadpiProcess, proc.isRunning else {
                 logger.error("ByeDPI exited prematurely before opening SOCKS5 port.")
-                exit(1)
+                emergencyTeardown()
+                return
             }
 
             if NetUtils.isPortOpen(host: config.socksHost, port: config.socksPort, timeout: 0.1) {
@@ -122,14 +148,14 @@ public final class RoutunDaemon {
                     return
                 }
                 logger.error("ByeDPI exited while its SOCKS5 port was being verified.")
-                exit(1)
+                emergencyTeardown()
+                return
             }
             usleep(100_000) // 100ms
         }
 
         logger.error("Timed out waiting for ByeDPI socket on \(config.socksHost):\(config.socksPort).")
-        ciadpiProcess?.terminate()
-        exit(1)
+        emergencyTeardown()
     }
 
     private func startSingbox() {
@@ -151,8 +177,7 @@ public final class RoutunDaemon {
             logger.info("sing-box spawned successfully (PID: \(proc.processIdentifier)).")
         } catch {
             logger.error("Failed to execute sing-box: \(error.localizedDescription)")
-            ciadpiProcess?.terminate()
-            exit(1)
+            emergencyTeardown()
         }
     }
 
@@ -163,16 +188,39 @@ public final class RoutunDaemon {
             return
         }
 
-        if let interface = NetUtils.tunInterface() {
-            let (_, isUp, ip) = NetUtils.getInterfaceInfo(name: interface)
-            if isUp {
-                logger.info("Interface \(interface) verified active (IP: \(ip ?? "assigned")).")
-            } else {
-                logger.warn("Interface \(interface) exists but is not yet reported UP.")
+        logger.info("Waiting for routun TUN interface to become active...")
+        var activeInterface: String? = nil
+        var activeIp: String? = nil
+        var activeIPv6: String? = nil
+
+        for _ in 1...50 {
+            guard let sb = singboxProcess, sb.isRunning else {
+                logger.error("sing-box terminated while waiting for TUN interface.")
+                emergencyTeardown()
+                return
             }
-        } else {
-            logger.warn("No routun TUN interface is visible yet, but sing-box process is healthy.")
+
+            if let interface = NetUtils.tunInterface() {
+                let (_, isUp, ip, ipv6) = NetUtils.getInterfaceInfo(name: interface)
+                if isUp {
+                    activeInterface = interface
+                    activeIp = ip
+                    activeIPv6 = ipv6
+                    break
+                }
+            }
+            usleep(100_000) // 100ms
         }
+
+        guard let interface = activeInterface else {
+            logger.error("Timed out waiting for routun TUN interface to report UP. Emergency teardown initiated.")
+            emergencyTeardown()
+            return
+        }
+
+        let ipv4Desc = activeIp != nil ? "IPv4: \(activeIp!)" : "IPv4 active"
+        let ipv6Desc = activeIPv6 != nil ? ", IPv6: \(activeIPv6!)" : ""
+        logger.info("TUN interface \(interface) confirmed UP (\(ipv4Desc)\(ipv6Desc)).")
     }
 
     private func runChild(_ process: Process) throws {
@@ -186,13 +234,19 @@ public final class RoutunDaemon {
     }
 
     private func writePidFile() {
+        let tunInterface = NetUtils.tunInterface() ?? ""
+        let (_, _, ip, ipv6) = tunInterface.isEmpty ? (false, false, nil, nil) : NetUtils.getInterfaceInfo(name: tunInterface)
         let state: [String: Any] = [
             "supervisor_pid": ProcessInfo.processInfo.processIdentifier,
             "ciadpi_pid": ciadpiProcess?.processIdentifier ?? 0,
             "singbox_pid": singboxProcess?.processIdentifier ?? 0,
             "started_at": ISO8601DateFormatter().string(from: Date()),
-            "tun_interface": NetUtils.tunInterface() ?? "",
-            "socks_port": config.socksPort
+            "tun_interface": tunInterface,
+            "tun_ipv4": ip ?? "",
+            "tun_ipv6": ipv6 ?? "",
+            "socks_port": config.socksPort,
+            "routing_mode": config.routingMode.rawValue,
+            "quic_mode": config.quicMode.rawValue
         ]
 
         if let data = try? JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys]) {

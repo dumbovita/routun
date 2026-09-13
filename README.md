@@ -82,31 +82,76 @@ routun doctor
 routun logs -f
 ```
 
-### Strategy Optimization (Blockcheck)
+### Selective Routing & Service Groups
 
-`routun` includes an automated strategy detector inspired by Zapret's `blockcheck`. It tests a comprehensive matrix of parameter combinations (pure splits, dual splits, SNI disorders, TLS record segmentation, fake TTL sweeps, and OOB data) against the complete curated target list. Each target is probed twice in the same evaluation cycle so profile selection uses consistent results without a redundant second full pass:
+Routun defaults to **selective routing** mode: only designated service groups and explicit domain overrides are routed through ByeDPI, while ordinary traffic, local LAN, and private IP ranges remain completely direct.
 
 ```bash
-# Auto-detect an optimal strategy across 59 combinations
+# Inspect active routing policy, QUIC mode, and target counts
+routun policy show
+
+# Manage built-in offline service groups (6 curated groups)
+routun group list
+routun group enable social
+routun group disable social
+
+# Add custom domain includes or overrides
+routun policy include subscene.best
+routun policy exclude internal.corp.net
+
+# Switch routing mode (selective vs global)
+routun policy mode selective
+routun policy mode global
+
+# Configure QUIC / HTTP/3 handling (scoped, blocked, or direct)
+routun policy quic scoped
+```
+
+#### Built-in Service Groups
+
+| Group ID | Description | Default Status |
+| :--- | :--- | :--- |
+| `general` | General web services and repositories affected by regional censorship | **Enabled** |
+| `social` | Social networks and messaging (Instagram, X/Twitter, Facebook, etc.) | Disabled |
+| `turkiye` | Services blocked by regional administrative/court orders (Roblox, Wattpad, etc.) | **Enabled** |
+| `youtube` | YouTube playback, thumbnails, and streaming infrastructure | **Enabled** |
+| `telegram` | Telegram Web and official messaging domains | Disabled |
+| `cloudflare` | Cloudflare edge endpoints and Encrypted ClientHello (ECH) | Disabled |
+
+### Scoped QUIC / HTTP/3 Handling
+
+Unlike legacy tools that globally drop all outbound UDP/443 (breaking HTTP/3 performance for the entire operating system), Routun features **scoped QUIC rejection**:
+- UDP/443 is rejected **only** for domains targeted for DPI bypass, prompting browsers to seamlessly fall back to TCP TLS where ByeDPI evasion operates.
+- Legitimate HTTP/3 and QUIC traffic to all other destinations continues without interruption.
+
+### Strategy Optimization (Blockcheck)
+
+Routun includes an automated strategy optimizer inspired by Zapret's `blockcheck`. It tests a comprehensive matrix of **51 unique macOS-supported parameter combinations** (pure splits, dual splits, SNI disorders, TLS record segmentation, OOB urgent bytes, and DISOOB) against a curated multi-platform target set.
+
+> [!NOTE]
+> **Darwin ByeDPI Capabilities**: In upstream ByeDPI (`ciadpi`), fake TCP packet injection (`-f`, `-t`, `-Q`) and TCP timeouts (`-T`) are compiled exclusively for Linux and Windows. On macOS, `-t` (TTL) and `-Q` (fake TLS ClientHello) are parsed by the CLI but inert in TCP handling. Routun actively detects Darwin capabilities, purges inert flags, and evaluates only genuine macOS-supported evasion techniques (`-s`, `-d`, `-o`, `-q`, `-r`, `-A`, `-M`, `-m`).
+
+```bash
+# Auto-detect the best evasion strategy across 51 macOS combinations
 routun optimize
 
 # Include custom target domains to verify they are not broken by DPI evasion
 routun optimize anadolu.edu.tr saglik.gov.tr
 
-# Fast screening mode with custom targets
+# Fast screening mode (evaluates 7 canonical profiles first)
 routun optimize --quick -t anadolu.edu.tr
 
 # Verbose mode with per-target connection and latency diagnostics
 routun optimize -v
 
-# View curated strategy profiles
+# View curated canonical strategy profiles (7 profiles)
 routun profile list
 
-# Inspect all 59 supported parameter combinations
+# Inspect all 51 supported parameter combinations
 routun profile list --all
 
 # Manually switch to any profile or combination
-routun profile set fake-ttl3-disorder-2s
+routun profile set disorder-split-sni
 
 # Inspect active profile and underlying ByeDPI arguments
 routun profile show

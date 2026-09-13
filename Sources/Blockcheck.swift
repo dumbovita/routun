@@ -156,13 +156,13 @@ public struct StrategyProfile: Equatable {
 }
 
 public enum StrategyProfiles {
-    // MARK: - Canonical Curated Profiles
+    // MARK: - Canonical Curated Profiles (Darwin-Supported)
     public static let defaultProfile = StrategyProfile(
         id: "default",
         name: "Default (Balanced)",
         family: "Balanced",
         description: "Split, SNI disorder, TLS record split (known-safe fallback)",
-        args: ["-s", "1", "-d", "3+s", "-r", "1+s", "-t", "3"],
+        args: ["-s", "1", "-d", "3+s", "-r", "1+s"],
         complexity: 0
     )
 
@@ -197,7 +197,7 @@ public enum StrategyProfiles {
         id: "disorder-sni",
         name: "SNI Disorder",
         family: "Disorder",
-        description: "Reverse packet order delivery at SNI",
+        description: "Reverse packet order delivery at SNI with TLS record split",
         args: ["-d", "1+s", "-r", "1+s"],
         complexity: 4
     )
@@ -211,13 +211,13 @@ public enum StrategyProfiles {
         complexity: 5
     )
 
-    public static let fakeDisorder = StrategyProfile(
-        id: "fake-disorder",
-        name: "Fake TTL + Disorder",
-        family: "Fake TTL",
-        description: "Low-TTL dummy packet injection + SNI disorder",
-        args: ["-t", "3", "-s", "1", "-d", "2+s", "-r", "1+s"],
-        complexity: 6
+    public static let disorderSplitSni = StrategyProfile(
+        id: "disorder-split-sni",
+        name: "Disorder + Split (SNI)",
+        family: "Disorder",
+        description: "Disorder at byte 1 with SNI split at byte 3",
+        args: ["-d", "1", "-s", "3+s"],
+        complexity: 5
     )
 
     public static let canonical: [StrategyProfile] = [
@@ -227,92 +227,88 @@ public enum StrategyProfiles {
         tlsrecSplit,
         disorderSni,
         oobSni,
-        fakeDisorder
+        disorderSplitSni
     ]
 
-    // MARK: - Exhaustive Combinations Matrix
+    // MARK: - Exhaustive Combinations Matrix (Strictly macOS-Supported & Deduplicated)
     public static let allCombinations: [StrategyProfile] = [
-        // Canonical Fallback
-        defaultProfile,
-
-        // 1. Pure Splits
+        // Pure Splits
         StrategyProfile(id: "split-1", name: "Split 1", family: "Split", description: "Split at initial byte", args: ["-s", "1"], complexity: 1),
         StrategyProfile(id: "split-2", name: "Split 2", family: "Split", description: "Split at byte 2", args: ["-s", "2"], complexity: 1),
-        StrategyProfile(id: "split-1s", name: "Split 1+s", family: "Split", description: "Split at SNI start", args: ["-s", "1+s"], complexity: 1),
         StrategyProfile(id: "split-2s", name: "Split 2+s", family: "Split", description: "Split inside SNI", args: ["-s", "2+s"], complexity: 1),
         StrategyProfile(id: "split-3s", name: "Split 3+s", family: "Split", description: "Split at byte 3 of SNI", args: ["-s", "3+s"], complexity: 1),
         StrategyProfile(id: "split-se", name: "Split 0+s+e", family: "Split", description: "Split at end of SNI", args: ["-s", "0+s+e"], complexity: 1),
         StrategyProfile(id: "split-sm", name: "Split 0+s+m", family: "Split", description: "Split at middle of SNI", args: ["-s", "0+s+m"], complexity: 1),
 
-        // 2. Dual Splits
+        // Dual & Multi Splits
         StrategyProfile(id: "dual-split-1-1s", name: "Dual Split 1 + 1+s", family: "Dual Split", description: "Byte 1 split + SNI start split", args: ["-s", "1", "-s", "1+s"], complexity: 2),
-        StrategyProfile(id: "dual-split-1-2s", name: "Dual Split 1 + 2+s", family: "Dual Split", description: "Byte 1 split + SNI 2nd byte split", args: ["-s", "1", "-s", "2+s"], complexity: 2),
         StrategyProfile(id: "dual-split-1-3s", name: "Dual Split 1 + 3+s", family: "Dual Split", description: "Byte 1 split + SNI 3rd byte split", args: ["-s", "1", "-s", "3+s"], complexity: 2),
         StrategyProfile(id: "dual-split-1-se", name: "Dual Split 1 + 0+s+e", family: "Dual Split", description: "Byte 1 split + SNI end split", args: ["-s", "1", "-s", "0+s+e"], complexity: 2),
         StrategyProfile(id: "dual-split-2-2s", name: "Dual Split 2 + 2+s", family: "Dual Split", description: "Byte 2 split + SNI 2nd byte split", args: ["-s", "2", "-s", "2+s"], complexity: 2),
         StrategyProfile(id: "dual-split-1s-2s", name: "Dual Split 1+s + 2+s", family: "Dual Split", description: "SNI start split + SNI 2nd byte split", args: ["-s", "1+s", "-s", "2+s"], complexity: 2),
+        StrategyProfile(id: "multi-split", name: "Multi Split (1 + 2+s + 3+s)", family: "Dual Split", description: "Three-stage progressive split through SNI", args: ["-s", "1", "-s", "2+s", "-s", "3+s"], complexity: 3),
 
-        // 3. Pure Disorders
+        // Pure Disorders
         StrategyProfile(id: "disorder-1s", name: "Disorder 1+s", family: "Disorder", description: "Reverse packet order at SNI start", args: ["-d", "1+s"], complexity: 3),
         StrategyProfile(id: "disorder-2s", name: "Disorder 2+s", family: "Disorder", description: "Reverse packet order inside SNI", args: ["-d", "2+s"], complexity: 3),
         StrategyProfile(id: "disorder-3s", name: "Disorder 3+s", family: "Disorder", description: "Reverse packet order at SNI byte 3", args: ["-d", "3+s"], complexity: 3),
         StrategyProfile(id: "disorder-se", name: "Disorder 0+s+e", family: "Disorder", description: "Reverse packet order at SNI end", args: ["-d", "0+s+e"], complexity: 3),
+        StrategyProfile(id: "multi-disorder", name: "Multi-Stage Disorder", family: "Disorder", description: "Alternating multi-stage disorder and split ladder", args: ["-d", "1", "-s", "1+s", "-d", "3+s", "-s", "6+s"], complexity: 4),
 
-        // 4. Split + Disorder Combinations
+        // Split + Disorder Combinations
         StrategyProfile(id: "split-1-disorder-1s", name: "Split 1 + Disorder 1+s", family: "Split+Disorder", description: "Byte 1 split + SNI start disorder", args: ["-s", "1", "-d", "1+s"], complexity: 4),
         StrategyProfile(id: "split-1-disorder-2s", name: "Split 1 + Disorder 2+s", family: "Split+Disorder", description: "Byte 1 split + SNI 2nd byte disorder", args: ["-s", "1", "-d", "2+s"], complexity: 4),
         StrategyProfile(id: "split-1-disorder-3s", name: "Split 1 + Disorder 3+s", family: "Split+Disorder", description: "Byte 1 split + SNI 3rd byte disorder", args: ["-s", "1", "-d", "3+s"], complexity: 4),
         StrategyProfile(id: "split-1-disorder-se", name: "Split 1 + Disorder 0+s+e", family: "Split+Disorder", description: "Byte 1 split + SNI end disorder", args: ["-s", "1", "-d", "0+s+e"], complexity: 4),
         StrategyProfile(id: "split-1s-disorder-2s", name: "Split 1+s + Disorder 2+s", family: "Split+Disorder", description: "SNI start split + SNI disorder", args: ["-s", "1+s", "-d", "2+s"], complexity: 4),
         StrategyProfile(id: "split-2-disorder-2s", name: "Split 2 + Disorder 2+s", family: "Split+Disorder", description: "Byte 2 split + SNI disorder", args: ["-s", "2", "-d", "2+s"], complexity: 4),
+        StrategyProfile(id: "disorder-split-7-2", name: "Disorder 7 + Split 2", family: "Split+Disorder", description: "Disorder at byte 7 with early byte 2 split", args: ["-d", "7", "-s", "2"], complexity: 4),
 
-        // 5. TLS Record Splits
+        // TLS Record Splits
         StrategyProfile(id: "tlsrec-1s", name: "TLS Record 1+s", family: "TLS Record", description: "TLS record layer segmentation at SNI", args: ["-r", "1+s"], complexity: 3),
         StrategyProfile(id: "tlsrec-2s", name: "TLS Record 2+s", family: "TLS Record", description: "TLS record layer segmentation inside SNI", args: ["-r", "2+s"], complexity: 3),
-        StrategyProfile(id: "tlsrec-1s-split-1", name: "TLS Record 1+s + Split 1", family: "TLS Record", description: "TLS record split at SNI + initial byte split", args: ["-r", "1+s", "-s", "1"], complexity: 3),
         StrategyProfile(id: "tlsrec-1s-split-1s", name: "TLS Record 1+s + Split 1+s", family: "TLS Record", description: "TLS record split + SNI start split", args: ["-r", "1+s", "-s", "1+s"], complexity: 3),
         StrategyProfile(id: "tlsrec-1s-split-2s", name: "TLS Record 1+s + Split 2+s", family: "TLS Record", description: "TLS record split + SNI byte 2 split", args: ["-r", "1+s", "-s", "2+s"], complexity: 3),
         StrategyProfile(id: "tlsrec-2s-split-1", name: "TLS Record 2+s + Split 1", family: "TLS Record", description: "TLS record inside SNI + byte 1 split", args: ["-r", "2+s", "-s", "1"], complexity: 3),
 
-        // 6. TLS Record + Disorder
-        StrategyProfile(id: "tlsrec-1s-disorder-1s", name: "TLS Record 1+s + Disorder 1+s", family: "TLS Record", description: "TLS record split + SNI start disorder", args: ["-r", "1+s", "-d", "1+s"], complexity: 4),
+        // TLS Record + Disorder
         StrategyProfile(id: "tlsrec-1s-disorder-2s", name: "TLS Record 1+s + Disorder 2+s", family: "TLS Record", description: "TLS record split + SNI 2nd byte disorder", args: ["-r", "1+s", "-d", "2+s"], complexity: 4),
         StrategyProfile(id: "tlsrec-1s-disorder-3s", name: "TLS Record 1+s + Disorder 3+s", family: "TLS Record", description: "TLS record split + SNI 3rd byte disorder", args: ["-r", "1+s", "-d", "3+s"], complexity: 4),
         StrategyProfile(id: "tlsrec-1s-split-1-disorder-2s", name: "TLS Record 1+s + Split 1 + Disorder 2+s", family: "TLS Record", description: "TLS record + byte 1 split + disorder 2+s", args: ["-r", "1+s", "-s", "1", "-d", "2+s"], complexity: 4),
         StrategyProfile(id: "tlsrec-1s-split-1-disorder-3s", name: "TLS Record 1+s + Split 1 + Disorder 3+s", family: "TLS Record", description: "TLS record + byte 1 split + disorder 3+s", args: ["-r", "1+s", "-s", "1", "-d", "3+s"], complexity: 4),
 
-        // 7. Fake TTL Sweeps (TTL 1, 2, 3, 4, 5, 8)
-        StrategyProfile(id: "fake-ttl1-disorder-2s", name: "Fake TTL 1 + Disorder 2+s", family: "Fake TTL", description: "TTL 1 dummy injection + disorder 2+s + record 1+s", args: ["-t", "1", "-s", "1", "-d", "2+s", "-r", "1+s"], complexity: 5),
-        StrategyProfile(id: "fake-ttl2-disorder-2s", name: "Fake TTL 2 + Disorder 2+s", family: "Fake TTL", description: "TTL 2 dummy injection + disorder 2+s + record 1+s", args: ["-t", "2", "-s", "1", "-d", "2+s", "-r", "1+s"], complexity: 5),
-        StrategyProfile(id: "fake-ttl3-disorder-2s", name: "Fake TTL 3 + Disorder 2+s", family: "Fake TTL", description: "TTL 3 dummy injection + disorder 2+s + record 1+s", args: ["-t", "3", "-s", "1", "-d", "2+s", "-r", "1+s"], complexity: 5),
-        StrategyProfile(id: "fake-ttl4-disorder-2s", name: "Fake TTL 4 + Disorder 2+s", family: "Fake TTL", description: "TTL 4 dummy injection + disorder 2+s + record 1+s", args: ["-t", "4", "-s", "1", "-d", "2+s", "-r", "1+s"], complexity: 5),
-        StrategyProfile(id: "fake-ttl5-disorder-2s", name: "Fake TTL 5 + Disorder 2+s", family: "Fake TTL", description: "TTL 5 dummy injection + disorder 2+s + record 1+s", args: ["-t", "5", "-s", "1", "-d", "2+s", "-r", "1+s"], complexity: 5),
-        StrategyProfile(id: "fake-ttl8-disorder-2s", name: "Fake TTL 8 + Disorder 2+s", family: "Fake TTL", description: "TTL 8 dummy injection + disorder 2+s + record 1+s", args: ["-t", "8", "-s", "1", "-d", "2+s", "-r", "1+s"], complexity: 5),
-        StrategyProfile(id: "fake-ttl2-disorder-3s", name: "Fake TTL 2 + Disorder 3+s", family: "Fake TTL", description: "TTL 2 dummy injection + disorder 3+s + record 1+s", args: ["-t", "2", "-s", "1", "-d", "3+s", "-r", "1+s"], complexity: 5),
-        StrategyProfile(id: "fake-ttl3-disorder-3s", name: "Fake TTL 3 + Disorder 3+s", family: "Fake TTL", description: "TTL 3 dummy injection + disorder 3+s + record 1+s", args: ["-t", "3", "-s", "1", "-d", "3+s", "-r", "1+s"], complexity: 5),
-        StrategyProfile(id: "fake-ttl4-disorder-3s", name: "Fake TTL 4 + Disorder 3+s", family: "Fake TTL", description: "TTL 4 dummy injection + disorder 3+s + record 1+s", args: ["-t", "4", "-s", "1", "-d", "3+s", "-r", "1+s"], complexity: 5),
-        StrategyProfile(id: "fake-ttl3-disorder-1s", name: "Fake TTL 3 + Disorder 1+s", family: "Fake TTL", description: "TTL 3 dummy injection + SNI start disorder", args: ["-t", "3", "-s", "1", "-d", "1+s"], complexity: 5),
-        StrategyProfile(id: "fake-ttl3-tlsrec-1s", name: "Fake TTL 3 + TLS Record 1+s", family: "Fake TTL", description: "TTL 3 dummy injection + TLS record split", args: ["-t", "3", "-r", "1+s", "-s", "1"], complexity: 5),
-
-        // 8. OOB & Disoob
-        StrategyProfile(id: "oob-1s-split-1", name: "OOB 1+s + Split 1", family: "OOB", description: "OOB urgent byte at SNI start + byte 1 split", args: ["-o", "1+s", "-s", "1"], complexity: 5),
+        // OOB & Disoob Combinations
         StrategyProfile(id: "oob-2s-split-1", name: "OOB 2+s + Split 1", family: "OOB", description: "OOB urgent byte inside SNI + byte 1 split", args: ["-o", "2+s", "-s", "1"], complexity: 5),
         StrategyProfile(id: "oob-1s-disorder-2s", name: "OOB 1+s + Disorder 2+s", family: "OOB", description: "OOB urgent byte at SNI start + disorder inside SNI", args: ["-o", "1+s", "-d", "2+s"], complexity: 5),
+        StrategyProfile(id: "oob-1s-disorder-3s", name: "OOB 1+s + Disorder 3+s", family: "OOB", description: "OOB urgent byte at SNI start + disorder at SNI byte 3", args: ["-o", "1+s", "-d", "3+s"], complexity: 5),
+        StrategyProfile(id: "oob-disorder-3-7", name: "OOB 3 + Disorder 7", family: "OOB", description: "Early OOB byte 3 combined with disorder 7", args: ["-o", "3", "-d", "7"], complexity: 5),
+        StrategyProfile(id: "oob-split-dual", name: "OOB 1 + Dual Split 4, 6", family: "OOB", description: "Initial OOB urgent byte with subsequent splits", args: ["-o", "1", "-s", "4", "-s", "6"], complexity: 5),
         StrategyProfile(id: "disoob-1s-split-1", name: "Disoob 1+s + Split 1", family: "OOB", description: "Reverse order OOB urgent data at SNI start", args: ["-q", "1+s", "-s", "1"], complexity: 5),
         StrategyProfile(id: "disoob-2s-split-1", name: "Disoob 2+s + Split 1", family: "OOB", description: "Reverse order OOB urgent data inside SNI", args: ["-q", "2+s", "-s", "1"], complexity: 5),
+        StrategyProfile(id: "disoob-tlsrec", name: "Disoob 1 + TLS Record 25+s", family: "OOB", description: "Disoob at start with deep TLS record segmentation", args: ["-q", "1", "-r", "25+s"], complexity: 5),
+        StrategyProfile(id: "tlsrec-disorder-oob", name: "Disorder 1+s + OOB 2 + Split 5 + TLS Record 5", family: "OOB", description: "Composite evasion with disorder, OOB, split, and record slice", args: ["-d", "1+s", "-o", "2", "-s", "5", "-r", "5"], complexity: 5),
 
-        // 9. Fake ClientHello TLS Mod
-        StrategyProfile(id: "fake-ch-rand-ttl3", name: "Fake CH (Rand) + TTL 3", family: "Fake CH", description: "Randomized fake ClientHello + TTL 3 + disorder", args: ["-Q", "rand", "-t", "3", "-s", "1", "-d", "2+s", "-r", "1+s"], complexity: 6),
-        StrategyProfile(id: "fake-ch-orig-ttl3", name: "Fake CH (Orig) + TTL 3", family: "Fake CH", description: "Original fake ClientHello copy + TTL 3 + disorder", args: ["-Q", "orig", "-t", "3", "-s", "1", "-d", "2+s", "-r", "1+s"], complexity: 6)
+        // Protocol Modification (Supported on macOS)
+        StrategyProfile(id: "modhttp-hcsmix-split", name: "HTTP Mix + Split 1+s", family: "HTTP Mod", description: "HTTP Header Case Mix + SNI Split", args: ["-M", "hcsmix", "-s", "1+s"], complexity: 2),
+        StrategyProfile(id: "tlsminor-split", name: "TLS Minor Ver + Split 1+s", family: "TLS Mod", description: "Modify TLS ClientHello minor version + SNI Split", args: ["-m", "4", "-s", "1+s"], complexity: 2)
     ]
 
-    /// Combined profile registry, deduplicated by ID
+    /// Combined profile registry, deduplicated by ID and verified for Darwin capabilities
     public static var all: [StrategyProfile] {
-        var seen = Set<String>()
+        var seenIds = Set<String>()
+        var seenArgs = Set<String>()
         var list = [StrategyProfile]()
+        let cap = ByeDPICapability.darwinStandard
+
         for p in canonical + allCombinations {
-            if !seen.contains(p.id) {
-                seen.insert(p.id)
+            let argKey = p.args.joined(separator: " ")
+            guard !seenIds.contains(p.id), !seenArgs.contains(argKey) else {
+                continue
+            }
+            let (valid, _) = cap.validate(args: p.args)
+            if valid {
+                seenIds.insert(p.id)
+                seenArgs.insert(argKey)
                 list.append(p)
             }
         }
@@ -327,6 +323,16 @@ public enum StrategyProfiles {
 
 // MARK: - Probe Result & Scoring
 
+public enum FailureCategory: String, Codable {
+    case none
+    case timeout
+    case tlsDpiBlock
+    case dnsFailure
+    case connectionReset
+    case httpError
+    case unknown
+}
+
 public struct ProbeResult {
     public let target: StrategyTarget
     public let isReachable: Bool
@@ -334,11 +340,34 @@ public struct ProbeResult {
     public let statusCode: Int
     public let exitCode: Int32
     public let detail: String
+    public let failureCategory: FailureCategory
     public let attempts: Int
     public let successfulAttempts: Int
 
     public var isReliable: Bool {
         successfulAttempts == attempts
+    }
+
+    public init(
+        target: StrategyTarget,
+        isReachable: Bool,
+        latencyMs: Int,
+        statusCode: Int,
+        exitCode: Int32,
+        detail: String,
+        failureCategory: FailureCategory = .none,
+        attempts: Int = 1,
+        successfulAttempts: Int = 1
+    ) {
+        self.target = target
+        self.isReachable = isReachable
+        self.latencyMs = latencyMs
+        self.statusCode = statusCode
+        self.exitCode = exitCode
+        self.detail = detail
+        self.failureCategory = failureCategory
+        self.attempts = attempts
+        self.successfulAttempts = successfulAttempts
     }
 }
 
@@ -432,7 +461,7 @@ public final class StrategyOptimizer {
         activeProcessLock.unlock()
 
         if let process {
-            terminateProcess(process)
+            terminateProcess(process, port: testPort)
         }
     }
 
@@ -487,7 +516,8 @@ public final class StrategyOptimizer {
         ]
 
         if let port = socksPort {
-            args += ["--socks5", "127.0.0.1:\(port)"]
+            // Use socks5-hostname so hostname resolution goes through the SOCKS proxy path
+            args += ["--socks5-hostname", "127.0.0.1:\(port)"]
         } else if let iface = physicalInterface {
             args += ["--interface", iface]
         }
@@ -510,16 +540,61 @@ public final class StrategyOptimizer {
             let parts = output.components(separatedBy: " ")
 
             let statusCode = parts.first.flatMap { Int($0) } ?? 0
-            let isReachable = statusCode > 0
 
-            var detail = "HTTP \(statusCode)"
-            if !isReachable {
+            var isReachable = false
+            var category: FailureCategory = .none
+            var detail = ""
+
+            if exitCode == 0 {
+                if statusCode >= 200 && statusCode < 400 {
+                    isReachable = true
+                    category = .none
+                    detail = "HTTP \(statusCode)"
+                } else if [400, 401, 404, 405].contains(statusCode) {
+                    // Standard application responses indicating TLS and HTTP handshake completed
+                    isReachable = true
+                    category = .none
+                    detail = "HTTP \(statusCode)"
+                } else if statusCode == 403 {
+                    isReachable = false
+                    category = .httpError
+                    detail = "HTTP 403 (Forbidden/WAF)"
+                } else if statusCode == 451 {
+                    isReachable = false
+                    category = .httpError
+                    detail = "HTTP 451 (Unavailable For Legal Reasons)"
+                } else if statusCode >= 500 {
+                    isReachable = false
+                    category = .httpError
+                    detail = "HTTP \(statusCode) (Server Error)"
+                } else {
+                    isReachable = false
+                    category = .unknown
+                    detail = "HTTP \(statusCode)"
+                }
+            } else {
                 switch exitCode {
-                case 28: detail = "Timeout"
-                case 35: detail = "TLS Handshake Blocked (DPI)"
-                case 7:  detail = "Connection Reset / Refused"
-                case 6:  detail = "DNS Resolution Failed"
-                default: detail = "Curl Error (\(exitCode))"
+                case 6:
+                    category = .dnsFailure
+                    detail = "DNS Resolution Failed"
+                case 7:
+                    category = .connectionReset
+                    detail = "Connection Reset / Refused"
+                case 28:
+                    category = .timeout
+                    detail = "Timeout"
+                case 35:
+                    category = .tlsDpiBlock
+                    detail = "TLS Handshake Blocked (DPI)"
+                case 52:
+                    category = .tlsDpiBlock
+                    detail = "Empty Reply (DPI Drop)"
+                case 56:
+                    category = .tlsDpiBlock
+                    detail = "Connection Reset by Peer (DPI)"
+                default:
+                    category = .unknown
+                    detail = "Curl Error (\(exitCode))"
                 }
             }
 
@@ -530,6 +605,7 @@ public final class StrategyOptimizer {
                 statusCode: statusCode,
                 exitCode: exitCode,
                 detail: detail,
+                failureCategory: category,
                 attempts: 1,
                 successfulAttempts: isReachable ? 1 : 0
             )
@@ -541,6 +617,7 @@ public final class StrategyOptimizer {
                 statusCode: 0,
                 exitCode: -1,
                 detail: error.localizedDescription,
+                failureCategory: .unknown,
                 attempts: 1,
                 successfulAttempts: 0
             )
@@ -560,6 +637,7 @@ public final class StrategyOptimizer {
         let successfulAttempts = first.successfulAttempts + second.successfulAttempts
         let selected = second.isReachable ? second : first.isReachable ? first : second
         let detail = successfulAttempts == 1 ? "\(selected.detail) (inconsistent: 1/2)" : selected.detail
+        let category: FailureCategory = (successfulAttempts > 0) ? .none : (second.failureCategory != .none ? second.failureCategory : first.failureCategory)
 
         return ProbeResult(
             target: selected.target,
@@ -568,6 +646,7 @@ public final class StrategyOptimizer {
             statusCode: selected.statusCode,
             exitCode: selected.exitCode,
             detail: detail,
+            failureCategory: category,
             attempts: 2,
             successfulAttempts: successfulAttempts
         )
@@ -591,13 +670,20 @@ public final class StrategyOptimizer {
     private func spawnTestCiadpi(profile: StrategyProfile, port: Int) -> Process? {
         guard FileManager.default.isExecutableFile(atPath: ciadpiPath) else { return nil }
 
-        if NetUtils.isPortOpen(host: "127.0.0.1", port: port, timeout: 0.05) {
-            return nil
+        // If port is lingering from previous test, wait up to 200ms for it to close
+        if NetUtils.isPortOpen(host: "127.0.0.1", port: port, timeout: 0.02) {
+            _ = NetUtils.waitForPortToClose(host: "127.0.0.1", port: port, timeout: 0.2)
+            if NetUtils.isPortOpen(host: "127.0.0.1", port: port, timeout: 0.02) {
+                return nil
+            }
         }
+
+        let cap = ByeDPICapability.darwinStandard
+        let sanitizedArgs = cap.sanitize(args: profile.args)
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: ciadpiPath)
-        proc.arguments = ["-i", "127.0.0.1", "-p", String(port), "-A", "torst,ssl_err"] + profile.args + ["-c", "128"]
+        proc.arguments = ["-i", "127.0.0.1", "-p", String(port), "-A", "torst,ssl_err"] + sanitizedArgs + ["-c", "128"]
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice
 
@@ -619,24 +705,27 @@ public final class StrategyOptimizer {
             usleep(15_000)
         }
 
-        terminateProcess(proc)
+        terminateProcess(proc, port: port)
         return nil
     }
 
-    /// Cleanly terminate a process with SIGTERM and SIGKILL fallback
-    private func terminateProcess(_ proc: Process) {
+    /// Cleanly terminate a process with SIGTERM/SIGINT and SIGKILL fallback, and wait for port release
+    private func terminateProcess(_ proc: Process, port: Int? = nil) {
         if proc.isRunning {
             proc.terminate()
-            kill(proc.processIdentifier, SIGHUP)
+            kill(proc.processIdentifier, SIGINT)
             for _ in 0..<5 {
                 if !proc.isRunning { break }
-                usleep(30_000)
+                usleep(20_000)
             }
             if proc.isRunning {
                 kill(proc.processIdentifier, SIGKILL)
             }
         }
         proc.waitUntilExit()
+        if let port = port {
+            _ = NetUtils.waitForPortToClose(host: "127.0.0.1", port: port, timeout: 0.3)
+        }
     }
 
     private func setActiveTestProcess(_ process: Process?) {
@@ -716,13 +805,10 @@ public final class StrategyOptimizer {
             }
             setActiveTestProcess(testProc)
 
-            defer {
-                terminateProcess(testProc)
-                setActiveTestProcess(nil)
-            }
-
             // Test candidate against the entire target list (all links)
             let probeResults = probeConcurrently(targets: evalTargets, socksPort: testPort, timeout: 1.5, attempts: 1)
+            terminateProcess(testProc, port: testPort)
+            setActiveTestProcess(nil)
             let candidateReachableHosts = Set(probeResults.filter { $0.isReachable }.map { $0.target.host })
 
             var unlockedCount = 0
@@ -837,12 +923,10 @@ public final class StrategyOptimizer {
         for (idx, contender) in topContenders.enumerated() {
             guard let testProc = spawnTestCiadpi(profile: contender.profile, port: testPort) else { continue }
             setActiveTestProcess(testProc)
-            defer {
-                terminateProcess(testProc)
-                setActiveTestProcess(nil)
-            }
 
             let fullResults = probeConcurrently(targets: evalTargets, socksPort: testPort, timeout: 1.8, attempts: 2)
+            terminateProcess(testProc, port: testPort)
+            setActiveTestProcess(nil)
             let candidateReachableHosts = Set(fullResults.filter { $0.isReliable }.map { $0.target.host })
             var totalReachable = 0
             var unlockedCount = 0

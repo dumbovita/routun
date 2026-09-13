@@ -19,18 +19,18 @@ public final class RoutunCommands {
         let daemonStatusStr = state.isLoaded
             ? "\(green)● loaded\(reset) (\(RoutunConfig.launchDaemonPlist))"
             : "\(red)○ not loaded\(reset)"
-        print("  LaunchDaemon:   \(daemonStatusStr)")
+        print("  LaunchDaemon:    \(daemonStatusStr)")
         let payloadVersion = ServiceManager.shared.installedPayloadVersion() ?? "not installed"
         let updateTag = payloadVersion == version ? "" : " \(yellow)[run sudo routun install to sync]\(reset)"
         print("  Service payload: \(payloadVersion)\(updateTag)")
 
         if state.isRunning, let sPid = state.supervisorPid, NetUtils.isProcessAlive(pid: sPid) {
             let startedStr = state.startedAt != nil ? " since \(state.startedAt!)" : ""
-            print("  Supervisor:     \(green)active (running)\(reset) [PID \(sPid)]\(startedStr)")
+            print("  Supervisor:      \(green)active (running)\(reset) [PID \(sPid)]\(startedStr)")
         } else if state.isLoaded {
-            print("  Supervisor:     \(yellow)starting or restarting\(reset)")
+            print("  Supervisor:      \(yellow)starting or restarting\(reset)")
         } else {
-            print("  Supervisor:     \(red)inactive (stopped)\(reset)")
+            print("  Supervisor:      \(red)inactive (stopped)\(reset)")
         }
 
         let socksOpen = NetUtils.isPortOpen(host: config.socksHost, port: config.socksPort, timeout: 0.3)
@@ -39,22 +39,45 @@ public final class RoutunCommands {
             ciadpiStatus = "PID \(cPid) (managed)"
         }
         let portStatus = socksOpen ? "\(green)listening on \(config.socksHost):\(config.socksPort)\(reset)" : "\(red)port \(config.socksPort) closed\(reset)"
-        print("  ByeDPI:         \(ciadpiStatus) (\(portStatus))")
+        print("  ByeDPI:          \(ciadpiStatus) (\(portStatus))")
         let activeProfile = config.selectedProfile ?? "default"
-        print("  Strategy:       \(bold)\(activeProfile)\(reset) (\(StrategyProfiles.find(by: activeProfile)?.name ?? "Custom"))")
+        print("  Strategy:        \(bold)\(activeProfile)\(reset) (\(StrategyProfiles.find(by: activeProfile)?.name ?? "Custom"))")
+
+        // Routing Policy
+        let policy = config.routePolicy
+        let modeDesc = policy.mode == .selective ? "\(green)selective\(reset) (targeted services)" : "\(yellow)global\(reset) (all TCP 80/443)"
+        print("  Routing Mode:    \(modeDesc)")
+        let quicDesc = policy.quicMode == .scoped ? "scoped (bypassed services only)" : policy.quicMode.rawValue
+        print("  QUIC (UDP/443):  \(quicDesc)")
+
+        let activeGroups = ServiceGroupCatalog.builtInGroups.filter { policy.isGroupEnabled($0) }
+        let groupNames = activeGroups.map(\.id).joined(separator: ", ")
+        print("  Active Groups:   \(groupNames.isEmpty ? "none" : groupNames)")
+        if !policy.customInclude.isEmpty {
+            print("  Custom Includes: \(policy.customInclude.count) domain(s)")
+        }
+        if !policy.customExclude.isEmpty {
+            print("  Custom Excludes: \(policy.customExclude.count) domain(s)")
+        }
 
         let tunInterface = state.tunInterface?.isEmpty == false
             ? state.tunInterface
             : state.isLoaded ? NetUtils.tunInterface() : nil
-        let tunInfo = tunInterface.map(NetUtils.getInterfaceInfo) ?? (false, false, nil)
+        let tunInfo = tunInterface.map(NetUtils.getInterfaceInfo) ?? (false, false, nil, nil)
         var singboxStatus = "not running"
         if let sPid = state.singboxPid, NetUtils.isProcessAlive(pid: sPid) {
             singboxStatus = "PID \(sPid) (managed)"
         }
+
+        var ipDescParts = [String]()
+        if let ip4 = tunInfo.2 { ipDescParts.append("IPv4: \(ip4)") }
+        if let ip6 = tunInfo.3 { ipDescParts.append("IPv6: \(ip6)") }
+        let ipDesc = ipDescParts.isEmpty ? "active" : ipDescParts.joined(separator: ", ")
+
         let tunStatus = tunInfo.0 && tunInfo.1
-            ? "\(green)\(tunInterface ?? "utun") UP\(reset) (IP: \(tunInfo.2 ?? "active"))"
+            ? "\(green)\(tunInterface ?? "utun") UP\(reset) (\(ipDesc))"
             : "\(red)no routun TUN interface\(reset)"
-        print("  sing-box:       \(singboxStatus) (\(tunStatus))")
+        print("  sing-box:        \(singboxStatus) (\(tunStatus))")
         print("------------------------------------------------------------")
     }
 
@@ -98,32 +121,33 @@ public final class RoutunCommands {
     }
 
     public static func logs(follow: Bool, lines: Int, errorOnly: Bool) {
-        let predicate = errorOnly
-            ? "subsystem == 'com.routun.routund' AND messageType == error"
-            : "subsystem == 'com.routun.routund'"
-        if follow {
-            print("\(cyan)Streaming unified routun logs (Press Ctrl+C to stop)...\(reset)")
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-            process.arguments = ["stream", "--style", "compact", "--predicate", predicate]
-            process.standardInput = FileHandle.standardInput
-            process.standardOutput = FileHandle.standardOutput
-            process.standardError = FileHandle.standardError
-            do {
-                try process.run()
-                process.waitUntilExit()
-            } catch {
-                print("\(red)Error:\(reset) Could not start log stream: \(error.localizedDescription)")
-            }
-        } else {
-            let (code, output) = ServiceManager.shared.runCommand("/usr/bin/log", ["show", "--style", "compact", "--predicate", predicate, "--last", "1h"])
-            guard code == 0 else {
-                print("\(red)Error:\(reset) Could not read unified logs: \(output)")
-                return
-            }
-            let recent = output.split(separator: "\n", omittingEmptySubsequences: false).suffix(max(1, lines))
-            print(recent.joined(separator: "\n"))
+        let (code, _) = ServiceManager.shared.runCommand("/usr/bin/which", ["log"])
+        guard code == 0 else {
+            print("\(red)Error:\(reset) /usr/bin/log utility is not available on this macOS system.")
+            exit(1)
         }
+
+        var cmdArgs = [
+            "log", "show",
+            "--predicate", "subsystem == \"com.routun.routund\" || process == \"routund\"",
+            "--style", "compact",
+            "--info"
+        ]
+
+        if errorOnly {
+            cmdArgs += ["--predicate", "(subsystem == \"com.routun.routund\" || process == \"routund\") && messageType >= 16"]
+        }
+
+        if follow {
+            cmdArgs[1] = "stream"
+            print("\(cyan)Streaming live logs from routund (Ctrl+C to stop)...\(reset)")
+        } else {
+            cmdArgs += ["--last", "\(lines)m"]
+            print("\(cyan)Showing routund logs from last \(lines) minutes:\(reset)")
+        }
+
+        let cArgs = cmdArgs.map { strdup($0) } + [nil]
+        execvp("/usr/bin/log", cArgs)
     }
 
     public static func doctor() {
@@ -136,7 +160,6 @@ public final class RoutunCommands {
         let (_, osVer) = ServiceManager.shared.runCommand("/usr/bin/sw_vers", ["-productVersion"])
         let (_, arch) = ServiceManager.shared.runCommand("/usr/bin/uname", ["-m"])
         print("  System:         macOS \(osVer) (\(arch))")
-
         print("  Service root:   \(RoutunConfig.appSupportDir)")
         print("  Config Dir:     \(RoutunConfig.serviceConfigDir)")
 
@@ -144,8 +167,14 @@ public final class RoutunCommands {
         let isRoot = geteuid() == 0
         print("  Current User:   \(isRoot ? "\(green)root (uid 0)\(reset)" : "\(yellow)non-root (uid \(geteuid()))\(reset)")")
 
+        // ByeDPI & Darwin capabilities
         if fm.isExecutableFile(atPath: config.ciadpiPath) {
+            let cap = ByeDPICapability.detect(ciadpiPath: config.ciadpiPath)
             print("  ByeDPI Path:    \(green)OK\(reset) (\(config.ciadpiPath))")
+            print("  Darwin Engine:  \(green)Split (-s), Disorder (-d), OOB (-o), DISOOB (-q), TLS-Record (-r), Auto-Detect (-A), HTTP-Mod (-M)\(reset)")
+            if !cap.supportsFakePackets {
+                print("  Fake Packets:   \(cyan)Disabled on macOS build (Linux/Win only; -t/-Q are inert for TCP)\(reset)")
+            }
         } else {
             print("  ByeDPI Path:    \(red)MISSING / NOT EXECUTABLE\(reset) (\(config.ciadpiPath))")
         }
@@ -159,11 +188,12 @@ public final class RoutunCommands {
             print("  sing-box Path:  \(red)MISSING / NOT EXECUTABLE\(reset) (\(config.singboxPath))")
         }
 
+        // sing-box config validation
         if fm.fileExists(atPath: config.singboxConfig) {
             if fm.isExecutableFile(atPath: config.singboxPath) {
                 let (cCode, cOut) = ServiceManager.shared.runCommand(config.singboxPath, ["check", "-c", config.singboxConfig])
                 if cCode == 0 {
-                    print("  sing-box Conf:  \(green)VALID\(reset) (\(config.singboxConfig))")
+                    print("  sing-box Conf:  \(green)VALID SYNTAX\(reset) (\(config.singboxConfig))")
                 } else {
                     print("  sing-box Conf:  \(red)INVALID SYNTAX\(reset) - \(cOut)")
                 }
@@ -174,6 +204,12 @@ public final class RoutunCommands {
             print("  sing-box Conf:  \(red)MISSING\(reset) at \(config.singboxConfig)")
         }
 
+        // Active Route Policy
+        let policy = config.routePolicy
+        let (bypassed, excluded) = policy.resolveTargets()
+        print("  Route Policy:   mode=\(policy.mode.rawValue), quic=\(policy.quicMode.rawValue), ipv6=\(policy.enableIPv6)")
+        print("  Targets:        \(bypassed.count) bypassed domain pattern(s), \(excluded.count) explicit exclusion(s)")
+
         let state = ServiceManager.shared.getStatus()
         if fm.fileExists(atPath: RoutunConfig.launchDaemonPlist) {
             let loadedTag = state.isLoaded ? " [\(green)LOADED\(reset)]" : " [\(yellow)NOT LOADED\(reset)]"
@@ -181,7 +217,6 @@ public final class RoutunCommands {
         } else {
             print("  LaunchDaemon:   \(yellow)NOT INSTALLED\(reset)")
         }
-        print("  Logs:           Apple Unified Logging (routun logs)")
 
         // Sockets
         let portBusy = NetUtils.isPortOpen(host: config.socksHost, port: config.socksPort, timeout: 0.2)
@@ -193,7 +228,11 @@ public final class RoutunCommands {
             : state.isLoaded ? NetUtils.tunInterface() : nil
         if let activeInterface {
             let tunInfo = NetUtils.getInterfaceInfo(name: activeInterface)
-            print("  Interface \(activeInterface): \(tunInfo.isUp ? "\(green)UP\(reset) (\(tunInfo.ip ?? ""))" : "\(yellow)DOWN\(reset)")")
+            var addrs = [String]()
+            if let ip = tunInfo.2 { addrs.append("IPv4: \(ip)") }
+            if let ip6 = tunInfo.3 { addrs.append("IPv6: \(ip6)") }
+            let addrStr = addrs.isEmpty ? "UP" : addrs.joined(separator: ", ")
+            print("  Interface \(activeInterface): \(tunInfo.1 ? "\(green)UP\(reset) (\(addrStr))" : "\(yellow)DOWN\(reset)")")
         } else {
             print("  TUN Interface:  \(yellow)INACTIVE (normal when stopped)\(reset)")
         }
@@ -236,24 +275,21 @@ public final class RoutunCommands {
         let state = ServiceManager.shared.getStatus()
         let isRoot = (geteuid() == 0)
 
-        // If the service is running but we are not root, escalate via sudo
-        // so that the service can be paused during testing and restarted cleanly with the new profile.
         if state.isRunning && !isRoot {
             print("\(yellow)Notice:\(reset) The routun DPI service is currently active.")
             print("To eliminate DPI routing interference during optimization, the service will be temporarily paused.")
-            print("Re-running with sudo...\n")
 
-            let execPath = Bundle.main.executablePath ?? CommandLine.arguments[0]
-            var args = ["sudo", execPath]
-            if CommandLine.arguments.count > 1 {
-                args.append(contentsOf: CommandLine.arguments.dropFirst())
+            if isatty(STDIN_FILENO) != 0 {
+                print("Re-running with sudo...\n")
+                let execPath = RoutunConfig.currentExecutablePath()
+                var args = CommandLine.arguments
+                args[0] = execPath
+                args.insert("/usr/bin/sudo", at: 0)
+                let cArgs = args.map { strdup($0) } + [nil]
+                execv("/usr/bin/sudo", cArgs)
             }
-            let cArgs = args.map { strdup($0) } + [nil]
-            execvp("/usr/bin/sudo", cArgs)
 
-            // If execvp returns, it failed to elevate
-            print("\(red)Error:\(reset) Privilege escalation failed. Please run:")
-            print("  \(bold)sudo routun optimize\(reset)")
+            print("\(red)Error:\(reset) Please re-run with sudo: \(bold)sudo routun optimize\(reset)")
             exit(1)
         }
 
@@ -268,7 +304,6 @@ public final class RoutunCommands {
             }
         }
 
-        // Setup signal handlers to guarantee service restoration on Ctrl+C (SIGINT) or kill (SIGTERM)
         var restored = false
         let restoreService = { (reason: String) in
             guard didStopService && !restored else { return }
@@ -360,7 +395,9 @@ public final class RoutunCommands {
         case "list":
             let showAll = (name == "--all" || name == "-a")
             let profilesToList = showAll ? StrategyProfiles.all : StrategyProfiles.canonical
-            let title = showAll ? "All Supported Parameter Combinations (\(StrategyProfiles.all.count)):" : "Curated ByeDPI Strategy Profiles:"
+            let title = showAll
+                ? "All Supported macOS Parameter Combinations (\(StrategyProfiles.all.count)):"
+                : "Curated macOS ByeDPI Strategy Profiles (\(StrategyProfiles.canonical.count)):"
 
             print("\(bold)\(title)\(reset)")
             print("------------------------------------------------------------")
@@ -373,11 +410,12 @@ public final class RoutunCommands {
             }
             print("------------------------------------------------------------")
             if !showAll {
-                print("Tip: Use '\(bold)routun profile list --all\(reset)' to inspect all \(StrategyProfiles.all.count) combinations.")
+                print("Tip: Use '\(bold)routun profile list --all\(reset)' to inspect all \(StrategyProfiles.all.count) macOS combinations.")
             }
             print("To switch profile: \(bold)routun profile set <name>\(reset)")
 
         case "set":
+            guard ensureRoot() else { exit(1) }
             guard let targetName = name, !targetName.isEmpty else {
                 print("\(red)Error:\(reset) Please specify a profile name. Run '\(bold)routun profile list\(reset)' to view options.")
                 exit(1)
@@ -395,15 +433,11 @@ public final class RoutunCommands {
 
                 let state = ServiceManager.shared.getStatus()
                 if state.isRunning {
-                    if geteuid() == 0 {
-                        print("\nRestarting service...")
-                        restart()
-                    } else {
-                        print("\nTo apply changes, restart the service: \(bold)sudo routun restart\(reset)")
-                    }
+                    print("\nRestarting service to apply profile...")
+                    restart()
                 }
             } else {
-                print("\(red)Error:\(reset) Could not write to \(RoutunConfig.defaultConfigFile). Run with sudo if permission denied.")
+                print("\(red)Error:\(reset) Could not write to \(RoutunConfig.defaultConfigFile).")
                 exit(1)
             }
 
@@ -421,13 +455,168 @@ public final class RoutunCommands {
         }
     }
 
+    public static func group(action: String?, name: String?) {
+        var config = RoutunConfig.load()
+        let policy = config.routePolicy
+
+        switch action?.lowercased() {
+        case "list", nil:
+            print("\(bold)Built-in Service Groups (\(ServiceGroupCatalog.builtInGroups.count)):\(reset)")
+            print("------------------------------------------------------------")
+            for group in ServiceGroupCatalog.builtInGroups {
+                let enabled = policy.isGroupEnabled(group)
+                let statusTag = enabled ? "\(green)enabled \(reset)" : "\(yellow)disabled\(reset)"
+                let paddedId = group.id.padding(toLength: 14, withPad: " ", startingAt: 0)
+                let count = group.domainSuffixes.count
+                print("  [\(statusTag)] \(bold)\(paddedId)\(reset) (\(count) suffixes) - \(group.description)")
+            }
+            print("------------------------------------------------------------")
+            print("To enable a group:  \(bold)routun group enable <name>\(reset)")
+            print("To disable a group: \(bold)routun group disable <name>\(reset)")
+
+        case "enable":
+            guard let groupId = name?.lowercased(), !groupId.isEmpty else {
+                print("\(red)Error:\(reset) Please specify a group name to enable.")
+                exit(1)
+            }
+            guard let group = ServiceGroupCatalog.find(byId: groupId) else {
+                print("\(red)Error:\(reset) Unknown group '\(groupId)'. Available groups: \(ServiceGroupCatalog.builtInGroups.map(\.id).joined(separator: ", "))")
+                exit(1)
+            }
+
+            config.groupPreferences[group.id] = true
+            applyConfigUpdate(&config, message: "Enabled group '\(group.id)' (\(group.name)).")
+
+        case "disable":
+            guard let groupId = name?.lowercased(), !groupId.isEmpty else {
+                print("\(red)Error:\(reset) Please specify a group name to disable.")
+                exit(1)
+            }
+            guard let group = ServiceGroupCatalog.find(byId: groupId) else {
+                print("\(red)Error:\(reset) Unknown group '\(groupId)'. Available groups: \(ServiceGroupCatalog.builtInGroups.map(\.id).joined(separator: ", "))")
+                exit(1)
+            }
+
+            config.groupPreferences[group.id] = false
+            applyConfigUpdate(&config, message: "Disabled group '\(group.id)' (\(group.name)).")
+
+        default:
+            print("\(red)Error:\(reset) Unknown group action '\(action!)'. Use 'list', 'enable <name>', or 'disable <name>'.")
+            exit(1)
+        }
+    }
+
+    public static func policy(action: String?, subAction: String?, value: String?) {
+        var config = RoutunConfig.load()
+        let policy = config.routePolicy
+
+        switch action?.lowercased() {
+        case "show", nil:
+            print("\(bold)Active Route Policy:\(reset)")
+            print("------------------------------------------------------------")
+            print("  Routing Mode:    \(bold)\(policy.mode.rawValue)\(reset) (selective vs global)")
+            print("  QUIC Mode:       \(bold)\(policy.quicMode.rawValue)\(reset) (scoped UDP/443 rejection)")
+            print("  DNS Mode:        \(bold)\(policy.dnsMode.rawValue)\(reset)")
+            print("  IPv6 Intercept:  \(policy.enableIPv6 ? "enabled" : "disabled")")
+            let (bypassed, _) = policy.resolveTargets()
+            print("  Bypassed Suffixes: \(bypassed.count) total")
+            if !policy.customInclude.isEmpty {
+                print("  Custom Includes: \(policy.customInclude.joined(separator: ", "))")
+            }
+            if !policy.customExclude.isEmpty {
+                print("  Custom Excludes: \(policy.customExclude.joined(separator: ", "))")
+            }
+            print("------------------------------------------------------------")
+            print("Usage:")
+            print("  routun policy mode <selective|global>")
+            print("  routun policy quic <scoped|blocked|direct>")
+            print("  routun policy include <domain>")
+            print("  routun policy exclude <domain>")
+            print("  routun policy remove <include|exclude> <domain>")
+
+        case "mode":
+            guard let modeStr = subAction?.lowercased(), let mode = RoutingMode(rawValue: modeStr) else {
+                print("\(red)Error:\(reset) Invalid mode. Choose 'selective' or 'global'.")
+                exit(1)
+            }
+            config.routingMode = mode
+            applyConfigUpdate(&config, message: "Routing mode changed to '\(mode.rawValue)'.")
+
+        case "quic":
+            guard let quicStr = subAction?.lowercased(), let quic = QUICMode(rawValue: quicStr) else {
+                print("\(red)Error:\(reset) Invalid QUIC mode. Choose 'scoped', 'blocked', or 'direct'.")
+                exit(1)
+            }
+            config.quicMode = quic
+            applyConfigUpdate(&config, message: "QUIC mode changed to '\(quic.rawValue)'.")
+
+        case "include":
+            guard let raw = subAction, let domain = ServiceGroupCatalog.normalizeDomain(raw) else {
+                print("\(red)Error:\(reset) Invalid domain to include.")
+                exit(1)
+            }
+            var inc = Set(config.customInclude)
+            inc.insert(domain)
+            config.customInclude = Array(inc).sorted()
+            applyConfigUpdate(&config, message: "Added '\(domain)' to custom inclusions.")
+
+        case "exclude":
+            guard let raw = subAction, let domain = ServiceGroupCatalog.normalizeDomain(raw) else {
+                print("\(red)Error:\(reset) Invalid domain to exclude.")
+                exit(1)
+            }
+            var exc = Set(config.customExclude)
+            exc.insert(domain)
+            config.customExclude = Array(exc).sorted()
+            applyConfigUpdate(&config, message: "Added '\(domain)' to custom exclusions.")
+
+        case "remove":
+            let targetType = subAction?.lowercased()
+            guard let raw = value, let domain = ServiceGroupCatalog.normalizeDomain(raw) else {
+                print("\(red)Error:\(reset) Usage: routun policy remove <include|exclude> <domain>")
+                exit(1)
+            }
+            if targetType == "include" {
+                config.customInclude.removeAll { $0 == domain }
+                applyConfigUpdate(&config, message: "Removed '\(domain)' from custom inclusions.")
+            } else if targetType == "exclude" {
+                config.customExclude.removeAll { $0 == domain }
+                applyConfigUpdate(&config, message: "Removed '\(domain)' from custom exclusions.")
+            } else {
+                print("\(red)Error:\(reset) Unknown removal type '\(subAction ?? "")'. Choose 'include' or 'exclude'.")
+                exit(1)
+            }
+
+        default:
+            print("\(red)Error:\(reset) Unknown policy command '\(action!)'. Run 'routun policy show'.")
+            exit(1)
+        }
+    }
+
+    private static func applyConfigUpdate(_ config: inout RoutunConfig, message: String) {
+        guard ensureRoot() else { exit(1) }
+        do {
+            try config.save()
+            try ServiceManager.shared.syncSingboxConfig(from: config)
+            print("\(green)\(message)\(reset)")
+
+            let state = ServiceManager.shared.getStatus()
+            if state.isRunning {
+                print("Restarting service to apply configuration...")
+                restart()
+            }
+        } catch {
+            print("\(red)Error saving configuration:\(reset) \(error.localizedDescription)")
+            exit(1)
+        }
+    }
+
     private static func ensureRoot() -> Bool {
         if geteuid() == 0 { return true }
 
-        // If running in an interactive terminal, automatically elevate via sudo
         if isatty(STDIN_FILENO) != 0 {
             var args = CommandLine.arguments
-            let execPath = Bundle.main.executablePath ?? "/usr/local/bin/routun"
+            let execPath = RoutunConfig.currentExecutablePath()
             args[0] = execPath
             args.insert("/usr/bin/sudo", at: 0)
             let cArgs = args.map { strdup($0) } + [nil]
